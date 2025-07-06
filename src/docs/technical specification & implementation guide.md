@@ -202,6 +202,12 @@ For MVP, "oracles" are implemented as specific UI components or scripts.
 
 #### Decentralized Storage Integration (IPFS and Arweave)
 
+We're strategic about where we store data:
+
+- IPFS (with pinning services): For high-availability, potentially dynamic data like high-resolution product images or aggregated simulated sensor logs. We'll store the CID (Content Identifier) on-chain.
+
+- Arweave (one-time payment): For permanent, immutable archival of critical documents like official certifications, audit reports, or legal documents. We'll store the Arweave Transaction ID on-chain.
+
 - **Frontend Integration:**
   - Use of JavaScript client library, `ipfs-http-client` for IPFS and `arweave-js` for Arweave to upload files.
   - Receive the content hash (CID for IPFS, transaction ID for Arweave).
