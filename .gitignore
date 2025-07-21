@@ -23,5 +23,17 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
 # Misc
-misc/
 *.end
+misc/
+
+# Development files
+/contracts/build/
+/contracts/node_modules/
+*.log
+.massa/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
