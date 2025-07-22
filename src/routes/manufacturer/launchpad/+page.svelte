@@ -2,14 +2,36 @@
 	import PageLayout from '$lib/components/PageLayout.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Card from '$lib/components/Card.svelte';
-	import { user, isConnected } from '$lib/stores/auth';
+	import { checkUserRole, getUserAddress } from '$lib/web3';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 
+	// Auth state
+	let isManufacturer = $state(false);
+	let userAddress = $state('');
+	let loading = $state(true);
+
 	// Redirect if not authenticated or wrong role
-	onMount(() => {
-		if (!$isConnected || ($user?.role !== 'manufacturer' && $user?.role !== 'admin')) {
+	onMount(async () => {
+		try {
+			loading = true;
+			userAddress = await getUserAddress();
+			isManufacturer = await checkUserRole('MANUFACTURER');
+			
+			if (!userAddress) {
+				goto('/connect');
+				return;
+			}
+			
+			if (!isManufacturer) {
+				goto('/manufacturer'); // Redirect to main page to request role
+				return;
+			}
+		} catch (err) {
+			console.error('Auth error:', err);
 			goto('/connect');
+		} finally {
+			loading = false;
 		}
 	});
 

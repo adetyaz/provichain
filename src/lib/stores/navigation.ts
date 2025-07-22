@@ -24,7 +24,6 @@ export const navigationItems: NavItem[] = [
 		roles: ['manufacturer', 'admin'],
 		children: [
 			{ label: 'Dashboard', href: '/manufacturer', icon: 'dashboard' },
-			{ label: 'Product Launchpad', href: '/manufacturer/launchpad', icon: 'rocket' },
 			{ label: 'My Products', href: '/manufacturer/products', icon: 'package' },
 			{ label: 'ASC Builder', href: '/manufacturer/asc-builder', icon: 'code' }
 		]

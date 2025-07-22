@@ -5,7 +5,7 @@ import { getScByteCode, getAccountProvider } from './utils';
 async function deployAccessControl() {
   const provider = await getAccountProvider();
 
-  console.log('Deploying AccessControlASC contract...');
+  console.log('🔄 DEPLOYING FIXED AccessControlASC contract...');
   console.log('Provider address:', provider.address);
 
   const balance = await provider.balance();

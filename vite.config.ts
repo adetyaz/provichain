@@ -15,5 +15,20 @@ export default defineConfig({
 			},
 			protocolImports: true
 		})
-	]
+	],
+	optimizeDeps: {
+		include: ['@massalabs/massa-web3', '@massalabs/wallet-provider']
+	},
+	resolve: {
+		alias: {
+			// Fix ES module resolution issues
+			'@massalabs/wallet-provider/dist/esm/errors':
+				'@massalabs/wallet-provider/dist/esm/errors/index.js'
+		}
+	},
+	build: {
+		commonjsOptions: {
+			include: [/node_modules/]
+		}
+	}
 });

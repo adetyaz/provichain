@@ -2,56 +2,59 @@
 	import PageLayout from '$lib/components/PageLayout.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Card from '$lib/components/Card.svelte';
-	import { user, isConnected } from '$lib/stores/auth';
+	import { getUserAddress, getUserProducts, getUserRole } from '$lib/web3';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 
-	// Redirect if not authenticated or wrong role
-	onMount(() => {
-		if (!$isConnected || ($user?.role !== 'consumer' && $user?.role !== 'admin')) {
+	// State management
+	let userAddress: string | null = $state(null);
+	let userRole: string | null = $state(null);
+	let loading = $state(true);
+	let error = $state('');
+	let userProducts = $state<any[]>([]);
+
+	// Check authentication and role on mount
+	onMount(async () => {
+		try {
+			const address = await getUserAddress();
+			const role = await getUserRole();
+			
+			userAddress = address;
+			userRole = role;
+			
+			if (!address || (role !== 'consumer' && role !== 'admin')) {
+				goto('/connect');
+				return;
+			}
+
+			// Load user's products
+			await loadUserProducts();
+		} catch (err) {
+			console.error('Authentication check failed:', err);
 			goto('/connect');
+		} finally {
+			loading = false;
 		}
 	});
 
-	const stats = [
-		{ label: 'Products Owned', value: '12', change: '+3%', icon: '📦' },
+	async function loadUserProducts() {
+		try {
+			const products = await getUserProducts(userAddress!);
+			userProducts = products;
+		} catch (err) {
+			console.error('Failed to load user products:', err);
+			error = 'Failed to load your products';
+		}
+	}
+
+	const stats = $derived([
+		{ label: 'Products Owned', value: userProducts.length.toString(), change: '+3%', icon: '📦' },
 		{ label: 'Verified This Month', value: '47', change: '+15%', icon: '✅' },
 		{ label: 'Watchlisted', value: '8', change: '+2%', icon: '👁️' },
 		{ label: 'Alerts Received', value: '2', change: '-50%', icon: '🔔' }
-	];
+	]);
 
-	const ownedProducts = [
-		{
-			id: 'PVC-2025-001',
-			name: 'Premium Organic Coffee',
-			manufacturer: 'Sustainable Farms Co.',
-			status: 'Delivered',
-			purchaseDate: '2025-02-10',
-			deliveryDate: '2025-02-16',
-			quality: 'Excellent',
-			value: '$125.00'
-		},
-		{
-			id: 'PVC-2025-007',
-			name: 'Swiss Artisan Chocolate',
-			manufacturer: 'Alpine Confections',
-			status: 'Consumed',
-			purchaseDate: '2025-01-25',
-			deliveryDate: '2025-01-30',
-			quality: 'Perfect',
-			value: '$89.99'
-		},
-		{
-			id: 'PVC-2025-012',
-			name: 'Organic Tea Collection',
-			manufacturer: 'Mountain Tea Co.',
-			status: 'In Use',
-			purchaseDate: '2025-02-01',
-			deliveryDate: '2025-02-05',
-			quality: 'Excellent',
-			value: '$67.50'
-		}
-	];
+	const ownedProducts = $derived(userProducts);
 
 	const watchlist = [
 		{
@@ -132,8 +135,17 @@
 
 <PageLayout 
 	title="Consumer Dashboard" 
-	subtitle="Welcome back, {$user?.name || 'Consumer'} • Track your products and verify authenticity"
+	subtitle="Welcome back, Consumer • Track your products and verify authenticity"
 >
+	{#if loading}
+		<div class="text-center py-8">
+			<div class="text-blue-400">Loading your dashboard...</div>
+		</div>
+	{:else if error}
+		<div class="bg-red-900/20 border border-red-500 rounded-lg p-4 mb-6">
+			<div class="text-red-400">{error}</div>
+		</div>
+	{:else}
 	<!-- Quick Stats -->
 	<section class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
 		{#each stats as stat}
@@ -311,4 +323,5 @@
 			</div>
 		</div>
 	</div>
+	{/if}
 </PageLayout>

@@ -41,9 +41,15 @@ export function registerDID(binaryArgs: StaticArray<u8>): void {
     .nextString()
     .expect('DID document hash is missing or invalid');
 
-  // Validate DID format
+  // Validate DID format - more flexible, just needs to start with 'did:'
   if (!didUri.startsWith('did:')) {
     generateEvent('Error: Invalid DID format - must start with "did:"');
+    return;
+  }
+
+  // Validate controller address format (Massa address should be longer)
+  if (controllerAddress.length < 40) {
+    generateEvent('Error: Invalid controller address format');
     return;
   }
 
@@ -53,12 +59,6 @@ export function registerDID(binaryArgs: StaticArray<u8>): void {
   );
   if (existingController.length > 0) {
     generateEvent('Error: DID already registered');
-    return;
-  }
-
-  // Validate controller address format (basic validation)
-  if (controllerAddress.length < 10) {
-    generateEvent('Error: Invalid controller address format');
     return;
   }
 
