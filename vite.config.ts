@@ -16,6 +16,11 @@ export default defineConfig({
 			protocolImports: true
 		})
 	],
+	server: {
+		fs: {
+			allow: ['..']
+		}
+	},
 	optimizeDeps: {
 		include: ['@massalabs/massa-web3', '@massalabs/wallet-provider']
 	},

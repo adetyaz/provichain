@@ -37,3 +37,8 @@ misc/
 .idea/
 *.swp
 *.swo
+
+
+debug-approval.ts
+debug-blockchain.ts
+debug-contract.ts

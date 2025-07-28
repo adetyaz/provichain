@@ -156,31 +156,33 @@
 			<Card title="Profile Information" description="Your account details and verification status">
 				<div class="grid md:grid-cols-2 gap-6">
 					<div>
-						<label class="block text-gray-300 text-sm mb-2">Display Name</label>
+						<label for="display-name" class="block text-gray-300 text-sm mb-2">Display Name</label>
 						<input 
+							id="display-name"
 							type="text" 
 							value={$user?.name || 'Anonymous User'}
 							class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-green-500"
 						>
 					</div>
 					<div>
-						<label class="block text-gray-300 text-sm mb-2">Email Address</label>
+						<label for="email-address" class="block text-gray-300 text-sm mb-2">Email Address</label>
 						<input 
+							id="email-address"
 							type="email" 
 							value={$user?.address || 'user@example.com'}
 							class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-green-500"
 						>
 					</div>
 					<div>
-						<label class="block text-gray-300 text-sm mb-2">Account Type</label>
-						<select class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-green-500">
+						<label for="account-type" class="block text-gray-300 text-sm mb-2">Account Type</label>
+						<select id="account-type" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-green-500">
 							<option selected={$user?.role === 'consumer'}>Consumer</option>
 							<option selected={$user?.role === 'manufacturer'}>Manufacturer</option>
 							<option selected={$user?.role === 'logistics'}>Logistics Provider</option>
 						</select>
 					</div>
 					<div>
-						<label class="block text-gray-300 text-sm mb-2">Trust Score</label>
+						<p class="block text-gray-300 text-sm mb-2">Trust Score</p>
 						<div class="flex items-center space-x-2">
 							<span class="text-2xl font-bold text-green-400">9.8</span>
 							<span class="text-gray-400 text-sm">/ 10</span>

@@ -7,8 +7,8 @@
 		size?: 'sm' | 'md' | 'lg';
 		href?: string;
 		onclick?: () => void;
-		disabled?: boolean;
 		loading?: boolean;
+		type?: 'button' | 'submit' | 'reset';
 		class?: string;
 	}
 
@@ -18,8 +18,8 @@
 		size = 'md', 
 		href, 
 		onclick, 
-		disabled = false, 
 		loading = false,
+		type = 'button',
 		class: className = ''
 	}: Props = $props();
 
@@ -39,7 +39,7 @@
 		lg: 'px-6 py-3 text-base rounded-lg'
 	};
 
-	const classes = `${baseClasses} ${variants[variant]} ${sizes[size]} ${disabled || loading ? 'opacity-50 cursor-not-allowed' : ''} ${className}`;
+	const classes = `${baseClasses} ${variants[variant]} ${sizes[size]} ${loading ? 'opacity-50 cursor-not-allowed' : ''} ${className}`;
 </script>
 
 {#if href}
@@ -54,8 +54,8 @@
 	</a>
 {:else}
 	<button 
-		{onclick} 
-		{disabled}
+		{onclick}
+		{type}
 		class={classes}
 	>
 		{#if loading}

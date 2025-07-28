@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { 
 		connectWallet, 
-		disconnectWallet, 
+		forceDisconnectWallet,  // Use force disconnect for complete cleanup
 		isConnected, 
 		isLoading, 
 		user, 
@@ -12,8 +12,8 @@
 	} from '$lib/stores/auth';
 	import Button from './Button.svelte';
 
-	let walletAvailable = false;
-	let showRoleSelector = false;
+	let walletAvailable = $state(false);
+	let showRoleSelector = $state(false);
 
 	// Check wallet availability on mount
 	onMount(async () => {
@@ -36,7 +36,7 @@
 	};
 
 	const handleDisconnect = () => {
-		disconnectWallet();
+		forceDisconnectWallet();  // Use force disconnect for complete cleanup
 		showRoleSelector = false;
 	};
 
@@ -45,10 +45,12 @@
 		showRoleSelector = false;
 	};
 
-	// Reactive statement to handle role selection
-	$: if ($user?.role && showRoleSelector) {
-		showRoleSelector = false;
-	}
+	// Effect to handle role selection
+	$effect(() => {
+		if ($user?.role && showRoleSelector) {
+			showRoleSelector = false;
+		}
+	});
 </script>
 
 {#if !walletAvailable}
@@ -105,7 +107,7 @@
 		<h3 class="text-lg font-semibold text-white mb-4">Select Your Role</h3>
 		<div class="grid grid-cols-2 gap-3">
 			<button 
-				on:click={() => selectRole('manufacturer')}
+				onclick={() => selectRole('manufacturer')}
 				class="role-button"
 			>
 				<div class="text-2xl mb-2">🏭</div>
@@ -114,7 +116,7 @@
 			</button>
 			
 			<button 
-				on:click={() => selectRole('logistics')}
+				onclick={() => selectRole('logistics')}
 				class="role-button"
 			>
 				<div class="text-2xl mb-2">🚚</div>
@@ -123,7 +125,7 @@
 			</button>
 			
 			<button 
-				on:click={() => selectRole('consumer')}
+				onclick={() => selectRole('consumer')}
 				class="role-button"
 			>
 				<div class="text-2xl mb-2">👤</div>
@@ -132,7 +134,7 @@
 			</button>
 			
 			<button 
-				on:click={() => selectRole('admin')}
+				onclick={() => selectRole('admin')}
 				class="role-button"
 			>
 				<div class="text-2xl mb-2">⚙️</div>

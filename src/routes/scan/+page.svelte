@@ -2,408 +2,277 @@
 	import PageLayout from '$lib/components/PageLayout.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Card from '$lib/components/Card.svelte';
-	import { getProduct, getUserAddress, getUserRole, getQualityData, getLocationData } from '$lib/web3';
-	import { getMetadataFromPinata } from '$lib/pinata';
-	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
+	import { getProduct } from '$lib/web3';
 
-	// State management - Svelte 5 syntax
-	let userAddress = $state('');
-	let userRole = $state<string | null>(null);
-	let loading = $state(true);
-	let scanning = $state(false);
-	let error = $state('');
 	let scannedCode = $state('');
+	let isScanning = $state(false);
 	let productData = $state<any>(null);
-	let qualityData = $state<any>(null);
-	let locationData = $state<any>(null);
 	let scanHistory = $state<string[]>([]);
+	let error = $state('');
 
-	// Initialize component
-	onMount(async () => {
-		try {
-			userAddress = await getUserAddress();
-			userRole = await getUserRole();
-			
-			// Load scan history from localStorage
-			const history = localStorage.getItem('scanHistory');
-			if (history) {
-				scanHistory = JSON.parse(history);
+	// Load scan history from localStorage
+	onMount(() => {
+		const stored = localStorage.getItem('scan-history');
+		if (stored) {
+			try {
+				scanHistory = JSON.parse(stored);
+			} catch (e) {
+				console.warn('Failed to parse scan history');
 			}
-		} catch (err) {
-			console.error('Initialization error:', err);
-		} finally {
-			loading = false;
 		}
 	});
 
-	// Manual product ID input (simulating QR scan)
-	async function handleScanSubmit(event: Event) {
-		event.preventDefault();
-		if (!scannedCode.trim()) {
-			error = 'Please enter a product ID';
-			return;
-		}
-		
-		await scanProduct(scannedCode.trim());
-	}
-
-	// Simulate QR code scanning
-	async function startQRScan() {
-		scanning = true;
+	const handleScan = async (productId?: string) => {
+		isScanning = true;
 		error = '';
+		const id = productId || scannedCode;
 		
-		// Simulate scanning delay
-		await new Promise(resolve => setTimeout(resolve, 2000));
-		
-		// For demo, randomly select a product ID
-		const demoProducts = ['PVC-2025-001', 'PVC-2025-007', 'PVC-2025-012'];
-		const randomProduct = demoProducts[Math.floor(Math.random() * demoProducts.length)];
-		
-		scannedCode = randomProduct;
-		scanning = false;
-		
-		await scanProduct(randomProduct);
-	}
-
-	// Main product scanning function
-	async function scanProduct(productId: string) {
 		try {
-			loading = true;
-			error = '';
-			productData = null;
-			qualityData = null;
-			locationData = null;
-
-			// Get product from blockchain
-			const productResult = await getProduct(productId);
-			
-			if (!productResult.success) {
-				error = `Product ${productId} not found on blockchain`;
-				return;
-			}
-
-			const blockchainProduct = productResult.data;
-			
-			// Get metadata from IPFS if available
-			let metadata = null;
-			if (blockchainProduct.metadata) {
-				try {
-					metadata = await getMetadataFromPinata(blockchainProduct.metadata);
-				} catch (err) {
-					console.warn('Failed to load IPFS metadata:', err);
-				}
-			}
-
-			// Combine blockchain data with metadata
-			productData = {
-				id: productId,
-				name: blockchainProduct.name || metadata?.name || 'Unknown Product',
-				batch: blockchainProduct.batch || metadata?.batch || 'Unknown',
-				manufacturer: blockchainProduct.manufacturer || metadata?.manufacturer || 'Unknown',
-				description: metadata?.description || 'No description available',
-				category: metadata?.category || 'Unknown',
-				image: metadata?.image,
-				timestamp: blockchainProduct.timestamp || Date.now(),
-				// ASC Configuration from metadata
-				ascConfig: metadata?.ascConfig || {
-					enableQualityMonitoring: false,
-					temperatureThreshold: '25',
-					humidityThreshold: '70',
-					enablePaymentAutomation: false,
-					paymentConditions: 'delivery_confirmation',
-					enableInsurance: false,
-					insuranceValue: ''
-				}
-			};
-
-			// Get real quality and location data from smart contracts
-			try {
-				qualityData = await getQualityData(productId);
-				locationData = await getLocationData(productId);
-			} catch (err) {
-				console.warn('Failed to load real-time data, using fallback:', err);
-				// Fallback to mock data if smart contracts fail
-				qualityData = {
-					temperature: Math.floor(Math.random() * 10) + 20 + '°C',
-					humidity: Math.floor(Math.random() * 20) + 50 + '%',
-					lastUpdate: new Date().toLocaleString(),
-					status: 'Normal',
-					alerts: []
+			const result = await getProduct(id);
+			if (result.success && result.data) {
+				productData = {
+					...result.data,
+					// Add some mock tracking data for demonstration
+					currentLocation: 'Distribution Center',
+					temperature: '22°C',
+					humidity: '45%',
+					quality: 'Excellent',
+					provenance: [
+						{ date: new Date(result.data.mintedAt).toISOString().split('T')[0], location: 'Manufacturer', event: 'Minted' },
+						{ date: new Date().toISOString().split('T')[0], location: 'Current Location', event: 'Tracked' }
+					],
+					certifications: ['Blockchain Verified'],
+					nftId: result.data.id || 'N/A'
 				};
-
-				locationData = {
-					currentLocation: 'New York Distribution Center',
-					latitude: 40.7128,
-					longitude: -74.0060,
-					lastUpdate: new Date().toLocaleString(),
-					status: 'In Transit',
-					estimatedDelivery: '2025-07-25'
-				};
+				
+				// Add to scan history
+				if (!scanHistory.includes(id)) {
+					scanHistory = [id, ...scanHistory.slice(0, 9)]; // Keep last 10 scans
+					localStorage.setItem('scan-history', JSON.stringify(scanHistory));
+				}
+			} else {
+				productData = null;
+				error = 'Product not found or invalid ID';
 			}
-
-			// Add to scan history
-			if (!scanHistory.includes(productId)) {
-				scanHistory = [productId, ...scanHistory.slice(0, 9)]; // Keep last 10
-				localStorage.setItem('scanHistory', JSON.stringify(scanHistory));
-			}
-
 		} catch (err) {
-			error = 'Failed to scan product: ' + (err instanceof Error ? err.message : String(err));
-			console.error('Scan error:', err);
+			console.error('Error scanning product:', err);
+			productData = null;
+			error = 'Failed to scan product. Please try again.';
 		} finally {
-			loading = false;
+			isScanning = false;
 		}
-	}
+	};
 
-	// Clear scan result
-	function clearScan() {
-		scannedCode = '';
-		productData = null;
-		qualityData = null;
-		locationData = null;
-		error = '';
-	}
-
-	// Navigate to product details page
-	function viewProductDetails(productId: string) {
-		goto(`/product/${productId}`);
-	}
-
-	// Scan from history
-	function scanFromHistory(productId: string) {
+	const handleQuickScan = (productId: string) => {
 		scannedCode = productId;
-		scanProduct(productId);
-	}
+		handleScan(productId);
+	};
+
+	onMount(() => {
+		// Load scan history from localStorage
+		const stored = localStorage.getItem('provichain-scan-history');
+		if (stored) {
+			scanHistory = JSON.parse(stored);
+		}
+	});
+
+	// Save history when it changes
+	$effect(() => {
+		localStorage.setItem('provichain-scan-history', JSON.stringify(scanHistory));
+	});
 </script>
 
-<PageLayout title="Product Scanner" subtitle="Scan QR codes to verify product authenticity and view supply chain details">
-	<div class="min-h-screen bg-gradient-to-br from-blue-50 to-green-50 p-6">
-		<div class="max-w-4xl mx-auto">
-			{#if userRole}
-				<div class="text-center mb-8">
-					<p class="text-sm text-blue-600">Connected as: {userRole}</p>
-				</div>
-			{/if}
-
-			<!-- Scanner Section -->
-			<Card title="Scan Product QR Code" class="mb-6">
-				<div class="text-center">
-					<!-- QR Scanner Button -->
-					<div class="mb-4">
-						<Button 
-							onclick={startQRScan} 
-							disabled={scanning || loading}
-							class="bg-blue-600 hover:bg-blue-700 px-8 py-3 text-lg"
-						>
-							{#if scanning}
-								<span class="animate-pulse">📱 Scanning...</span>
-							{:else}
-								📱 Start QR Scan
-							{/if}
-						</Button>
+<PageLayout 
+	title="Product Verification" 
+	subtitle="Scan QR codes or enter product IDs to verify authenticity and view provenance"
+	maxWidth="2xl"
+>
+	<div class="grid lg:grid-cols-2 gap-8">
+		<!-- Scanner Section -->
+		<div class="space-y-6">
+			<Card title="Scan Product" description="Enter product ID or scan QR code">
+				<div class="space-y-4">
+					<div>
+						<label for="product-id-scan" class="block text-sm font-medium text-white mb-2">Product ID</label>
+						<input
+							id="product-id-scan"
+							bind:value={scannedCode}
+							placeholder="e.g., PVC-2025-001"
+							class="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:border-green-500 focus:outline-none"
+						/>
 					</div>
 
-					<!-- Manual Input -->
-					<div class="border-t pt-4">
-						<p class="text-sm text-gray-600 mb-3">Or enter product ID manually:</p>
-						<form onsubmit={handleScanSubmit} class="flex gap-2 max-w-md mx-auto">
-							<input
-								bind:value={scannedCode}
-								type="text"
-								placeholder="Enter product ID (e.g., PVC-2025-001)"
-								class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-								disabled={loading}
-							/>
-							<button 
-								type="submit" 
-								disabled={loading || !scannedCode.trim()}
-								class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								Scan
-							</button>
-						</form>
-					</div>
+					<Button 
+						onclick={() => handleScan()} 
+						loading={isScanning}
+						class="w-full" 
+						size="lg"
+					>
+						{isScanning ? 'Verifying...' : 'Verify Product'}
+					</Button>
+
+					{#if error}
+						<div class="bg-red-900/20 border border-red-500 rounded-lg p-3 text-red-400 text-sm">
+							{error}
+						</div>
+					{/if}
+
+					{#if scanHistory.length > 0}
+						<div class="text-center">
+							<p class="text-gray-400 text-sm mb-4">Recent scans:</p>
+							<div class="flex flex-wrap gap-2">
+								{#each scanHistory.slice(0, 3) as productId}
+									<Button 
+										onclick={() => handleQuickScan(productId)} 
+										variant="outline" 
+										size="sm"
+									>
+										{productId.slice(-8)}
+									</Button>
+								{/each}
+							</div>
+						</div>
+					{/if}
 				</div>
 			</Card>
 
-			<!-- Error Display -->
-			{#if error}
-				<Card title="Error" class="mb-6 border-red-200 bg-red-50">
-					<div class="text-red-700">
-						<p>{error}</p>
-						<Button onclick={clearScan} class="mt-3 bg-red-600 hover:bg-red-700">
-							Clear
-						</Button>
+			<!-- QR Scanner Placeholder -->
+			<Card title="QR Code Scanner" description="Use your camera to scan product QR codes">
+				<div class="aspect-square bg-gray-800 rounded-lg flex items-center justify-center mb-4">
+					<div class="text-center">
+						<div class="text-6xl mb-4">📱</div>
+						<p class="text-gray-200">QR Scanner</p>
+						<p class="text-gray-300 text-sm">Camera integration coming soon</p>
+					</div>
+				</div>
+				<Button variant="outline" class="w-full">
+					Enable Camera
+				</Button>
+			</Card>
+		</div>
+
+		<!-- Results Section -->
+		<div class="space-y-6">
+			{#if isScanning}
+				<Card title="Verifying..." description="Checking blockchain records">
+					<div class="flex items-center justify-center py-12">
+						<div class="text-center">
+							<svg class="w-12 h-12 animate-spin text-green-500 mx-auto mb-4" fill="none" viewBox="0 0 24 24">
+								<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+								<path class="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+							</svg>
+							<p class="text-gray-300">Verifying on Massa blockchain...</p>
+						</div>
 					</div>
 				</Card>
-			{/if}
-
-			<!-- Loading State -->
-			{#if loading && !scanning}
-				<Card title="Loading" class="mb-6">
-					<div class="text-center py-8">
-						<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-						<p class="text-gray-600">Loading product data...</p>
-					</div>
-				</Card>
-			{/if}
-
-			<!-- Product Data Display -->
-			{#if productData}
-				<div class="grid gap-6 md:grid-cols-2">
-					<!-- Product Information -->
-					<Card title="Product Verified">
-						<h3 class="text-xl font-semibold mb-4 text-green-700">✅ Authentic Product</h3>
-						<div class="space-y-3">
-							<div>
-								<strong>Product ID:</strong> {productData.id}
-							</div>
-							<div>
-								<strong>Name:</strong> {productData.name}
-							</div>
-							<div>
-								<strong>Batch:</strong> {productData.batch}
-							</div>
-							<div>
-								<strong>Manufacturer:</strong> {productData.manufacturer}
-							</div>
-							<div>
-								<strong>Category:</strong> {productData.category}
-							</div>
-							{#if productData.description}
-								<div>
-									<strong>Description:</strong> {productData.description}
-								</div>
-							{/if}
-							<div class="pt-3 border-t">
-								<Button 
-									onclick={() => viewProductDetails(productData.id)}
-									class="w-full bg-blue-600 hover:bg-blue-700"
-								>
-									View Full Details
-								</Button>
+			{:else if productData}
+				<!-- Product Found -->
+				<Card title="✅ Product Verified" description="Authentic product found on blockchain">
+					<div class="space-y-6">
+						<!-- Product Info -->
+						<div class="bg-gray-800 rounded-lg p-4">
+							<h3 class="font-bold text-white text-lg mb-2">{productData.name}</h3>
+							<p class="text-gray-300">by {productData.manufacturer}</p>
+							<div class="mt-3 flex flex-wrap gap-2">
+								{#each productData.certifications as cert}
+									<span class="px-2 py-1 bg-green-500/20 text-green-400 text-xs rounded-full">
+										{cert}
+									</span>
+								{/each}
 							</div>
 						</div>
-					</Card>
 
-					<!-- Quality Monitoring -->
-					{#if qualityData}
-						<Card title="Quality Monitoring">
-							<h3 class="text-xl font-semibold mb-4 text-orange-700">🌡️ Quality Data</h3>
-							<div class="space-y-3">
-								<div>
-									<strong>Temperature:</strong> {qualityData.temperature}
+						<!-- Status & Location -->
+						<div class="grid grid-cols-2 gap-4">
+							<div class="bg-gray-800 rounded-lg p-4">
+								<p class="text-gray-400 text-sm">Status</p>
+								<p class="text-white font-semibold">{productData.status}</p>
+							</div>
+							<div class="bg-gray-800 rounded-lg p-4">
+								<p class="text-gray-400 text-sm">Quality</p>
+								<p class="text-green-400 font-semibold">{productData.quality}</p>
+							</div>
+						</div>
+
+						<div class="bg-gray-800 rounded-lg p-4">
+							<p class="text-gray-400 text-sm">Current Location</p>
+							<p class="text-white">{productData.currentLocation}</p>
+						</div>
+
+						<!-- Environmental Data -->
+						{#if productData.temperature}
+							<div class="grid grid-cols-2 gap-4">
+								<div class="bg-gray-800 rounded-lg p-4">
+									<p class="text-gray-400 text-sm">Temperature</p>
+									<p class="text-blue-400 font-semibold">{productData.temperature}</p>
 								</div>
-								<div>
-									<strong>Humidity:</strong> {qualityData.humidity}
-								</div>
-								<div>
-									<strong>Status:</strong> 
-									<span class="inline-block px-2 py-1 bg-green-100 text-green-800 rounded text-sm">
-										{qualityData.status}
-									</span>
-								</div>
-								<div>
-									<strong>Last Update:</strong> {qualityData.lastUpdate}
-								</div>
-								{#if qualityData.alerts && qualityData.alerts.length > 0}
-									<div>
-										<strong>Alerts:</strong>
-										<ul class="mt-1 space-y-1">
-											{#each qualityData.alerts as alert}
-												<li class="text-red-600 text-sm">⚠️ {alert}</li>
-											{/each}
-										</ul>
+								{#if productData.humidity}
+									<div class="bg-gray-800 rounded-lg p-4">
+										<p class="text-gray-400 text-sm">Humidity</p>
+										<p class="text-blue-400 font-semibold">{productData.humidity}</p>
 									</div>
 								{/if}
 							</div>
-						</Card>
-					{/if}
+						{/if}
 
-					<!-- Location Tracking -->
-					{#if locationData}
-						<Card title="Location Tracking">
-							<h3 class="text-xl font-semibold mb-4 text-purple-700">📍 Location Tracking</h3>
-							<div class="space-y-3">
-								<div>
-									<strong>Current Location:</strong> {locationData.currentLocation}
-								</div>
-								<div>
-									<strong>Status:</strong>
-									<span class="inline-block px-2 py-1 bg-blue-100 text-blue-800 rounded text-sm">
-										{locationData.status}
-									</span>
-								</div>
-								<div>
-									<strong>Coordinates:</strong> {locationData.latitude}, {locationData.longitude}
-								</div>
-								<div>
-									<strong>Last Update:</strong> {locationData.lastUpdate}
-								</div>
-								{#if locationData.estimatedDelivery}
-									<div>
-										<strong>Est. Delivery:</strong> {locationData.estimatedDelivery}
-									</div>
-								{/if}
-							</div>
-						</Card>
-					{/if}
-
-					<!-- ASC Configuration -->
-					{#if productData.ascConfig}
-						<Card title="Smart Contract Configuration">
-							<h3 class="text-xl font-semibold mb-4 text-indigo-700">⚙️ ASC Config</h3>
-							<div class="space-y-2 text-sm">
-								<div class="flex justify-between">
-									<span>Quality Monitoring:</span>
-									<span class={productData.ascConfig.enableQualityMonitoring ? 'text-green-600' : 'text-gray-500'}>
-										{productData.ascConfig.enableQualityMonitoring ? '✅ Enabled' : '❌ Disabled'}
-									</span>
-								</div>
-								{#if productData.ascConfig.enableQualityMonitoring}
-									<div class="ml-4 text-xs text-gray-600">
-										<div>Temp Threshold: {productData.ascConfig.temperatureThreshold}°C</div>
-										<div>Humidity Threshold: {productData.ascConfig.humidityThreshold}%</div>
-									</div>
-								{/if}
-								<div class="flex justify-between">
-									<span>Payment Automation:</span>
-									<span class={productData.ascConfig.enablePaymentAutomation ? 'text-green-600' : 'text-gray-500'}>
-										{productData.ascConfig.enablePaymentAutomation ? '✅ Enabled' : '❌ Disabled'}
-									</span>
-								</div>
-								<div class="flex justify-between">
-									<span>Insurance:</span>
-									<span class={productData.ascConfig.enableInsurance ? 'text-green-600' : 'text-gray-500'}>
-										{productData.ascConfig.enableInsurance ? '✅ Enabled' : '❌ Disabled'}
-									</span>
-								</div>
-							</div>
-						</Card>
-					{/if}
-				</div>
-
-				<!-- Actions -->
-				<div class="mt-6 text-center">
-					<Button onclick={clearScan} class="bg-gray-500 hover:bg-gray-600">
-						Scan Another Product
-					</Button>
-				</div>
+						<!-- Actions -->
+						<div class="flex flex-col sm:flex-row gap-3">
+							<Button href="/product/{productData.id}" class="flex-1">
+								View Full Details
+							</Button>
+							<Button href="/consumer" variant="outline" class="flex-1">
+								Add to Watchlist
+							</Button>
+						</div>
+					</div>
+				</Card>
+			{:else if scannedCode && !isScanning}
+				<!-- Product Not Found -->
+				<Card title="❌ Product Not Found" description="No matching product found on blockchain">
+					<div class="text-center py-8">
+						<div class="text-6xl mb-4">🔍</div>
+						<p class="text-gray-300 mb-4">
+							Product ID "<span class="font-mono text-green-400">{scannedCode}</span>" not found
+						</p>
+						<p class="text-gray-400 text-sm mb-6">
+							This could mean the product hasn't been tokenized yet, or the ID is incorrect.
+						</p>
+						<div class="flex flex-col sm:flex-row gap-3 justify-center">
+							<Button variant="outline" onclick={() => { scannedCode = ''; productData = null; }}>
+								Try Another ID
+							</Button>
+							<Button href="/manufacturer" variant="ghost">
+								Tokenize Product
+							</Button>
+						</div>
+					</div>
+				</Card>
+			{:else}
+				<!-- Initial State -->
+				<Card title="Product Information" description="Enter a product ID to see verification results">
+					<div class="text-center py-12">
+						<div class="text-6xl mb-4">📦</div>
+						<p class="text-gray-400">Enter a product ID to verify authenticity</p>
+					</div>
+				</Card>
 			{/if}
 
 			<!-- Scan History -->
 			{#if scanHistory.length > 0}
-				<Card title="Recent Scans" class="mt-6">
-					<div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-						{#each scanHistory as productId}
+				<Card title="Recent Scans" description="Your recently verified products">
+					<div class="space-y-2 max-h-64 overflow-y-auto">
+						{#each scanHistory.slice(0, 5) as historyItem}
 							<button
-								onclick={() => scanFromHistory(productId)}
-								class="text-left p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-								disabled={loading}
+								onclick={() => handleQuickScan(historyItem)}
+								class="w-full text-left p-3 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"
 							>
-								<div class="font-medium text-sm">{productId}</div>
-								<div class="text-xs text-gray-500">Click to scan again</div>
+								<div class="flex items-center justify-between">
+									<span class="font-mono text-sm text-green-400">{historyItem}</span>
+									<svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+									</svg>
+								</div>
 							</button>
 						{/each}
 					</div>

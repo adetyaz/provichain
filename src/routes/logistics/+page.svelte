@@ -2,16 +2,7 @@
 	import PageLayout from '$lib/components/PageLayout.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Card from '$lib/components/Card.svelte';
-	import { user, isConnected } from '$lib/stores/auth';
-	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
-
-	// Redirect if not authenticated or wrong role
-	onMount(() => {
-		if (!$isConnected || ($user?.role !== 'logistics' && $user?.role !== 'admin')) {
-			goto('/connect');
-		}
-	});
+	import RouteGuard from '$lib/components/RouteGuard.svelte';
 
 	const stats = [
 		{ label: 'Active Shipments', value: '23', change: '+5%', icon: '🚛' },
@@ -28,72 +19,69 @@
 			destination: 'New York, USA',
 			status: 'In Transit',
 			currentLocation: 'Atlantic Ocean',
-			eta: '2 days',
-			temperature: '23°C',
-			lastUpdate: '30 mins ago'
+			expectedDelivery: '2025-01-30',
+			temperature: '22°C',
+			humidity: '45%'
 		},
 		{
 			id: 'SHP-2025-002',
-			product: 'Swiss Watch Collection',
-			origin: 'Geneva, Switzerland',
-			destination: 'Tokyo, Japan',
-			status: 'Customs Clearance',
-			currentLocation: 'Narita Airport',
-			eta: '1 day',
+			product: 'Organic Tea Collection',
+			origin: 'Sri Lanka',
+			destination: 'London, UK',
+			status: 'Quality Check',
+			currentLocation: 'Port of Colombo',
+			expectedDelivery: '2025-02-05',
 			temperature: '20°C',
-			lastUpdate: '2 hours ago'
+			humidity: '50%'
 		},
 		{
 			id: 'SHP-2025-003',
-			product: 'Organic Tea Leaves',
-			origin: 'Darjeeling, India',
-			destination: 'London, UK',
-			status: 'Quality Check',
-			currentLocation: 'London Port',
-			eta: 'Today',
-			temperature: '22°C',
-			lastUpdate: '1 hour ago'
+			product: 'Swiss Luxury Watches',
+			origin: 'Switzerland',
+			destination: 'Tokyo, Japan',
+			status: 'Pending Pickup',
+			currentLocation: 'Geneva Warehouse',
+			expectedDelivery: '2025-02-12',
+			temperature: '18°C',
+			humidity: '40%'
 		}
 	];
 
-	const recentAlerts = [
+	const qualityAlerts = [
 		{
-			type: 'warning',
-			message: 'Temperature spike in shipment SHP-2025-001',
-			shipment: 'Premium Coffee',
-			time: '30 mins ago',
-			action: 'Cooling system activated'
+			id: 'ALT-001',
+			shipment: 'SHP-2025-001',
+			product: 'Premium Coffee',
+			type: 'Temperature',
+			severity: 'medium',
+			message: 'Temperature exceeded threshold for 15 minutes',
+			time: '2 hours ago'
 		},
 		{
-			type: 'success',
-			message: 'Payment released for completed delivery',
-			shipment: 'Swiss Watch',
-			time: '2 hours ago',
-			action: 'Auto-payment completed'
-		},
-		{
-			type: 'info',
-			message: 'GPS location updated for SHP-2025-003',
-			shipment: 'Organic Tea',
-			time: '1 hour ago',
-			action: 'Location confirmed'
+			id: 'ALT-002',
+			shipment: 'SHP-2025-004',
+			product: 'Pharmaceutical Batch',
+			type: 'Humidity',
+			severity: 'high',
+			message: 'Humidity levels critical - immediate action required',
+			time: '4 hours ago'
 		}
 	];
 
 	const quickActions = [
 		{
-			title: 'Update Location',
-			description: 'Log current shipment location',
-			href: '/logistics/shipments',
-			icon: '📍',
-			color: 'green'
+			title: 'New Shipment',
+			description: 'Create shipment record',
+			href: '/logistics/shipments/new',
+			icon: '📦',
+			color: 'blue'
 		},
 		{
-			title: 'View Routes',
-			description: 'Optimize delivery routes',
-			href: '/logistics/routes',
-			icon: '🗺️',
-			color: 'blue'
+			title: 'Update Location',
+			description: 'Track current position',
+			href: '/logistics/tracking',
+			icon: '📍',
+			color: 'green'
 		},
 		{
 			title: 'Quality Report',
@@ -112,184 +100,127 @@
 	];
 </script>
 
-<PageLayout 
-	title="Logistics Dashboard" 
-	subtitle="Welcome back, {$user?.name || 'Logistics Provider'} • Track shipments and manage deliveries"
->
-	<!-- Quick Stats -->
-	<section class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
-		{#each stats as stat}
-			<div class="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-xl p-6 hover:border-blue-500/30 transition-all">
-				<div class="flex items-center justify-between mb-2">
-					<span class="text-2xl">{stat.icon}</span>
-					<span class="text-xs px-2 py-1 rounded-full {stat.change.startsWith('+') ? 'bg-green-500/20 text-green-400' : stat.change === '0%' ? 'bg-gray-500/20 text-gray-400' : 'bg-red-500/20 text-red-400'}">
-						{stat.change}
-					</span>
-				</div>
-				<div class="text-2xl font-bold text-white mb-1">{stat.value}</div>
-				<div class="text-gray-400 text-sm">{stat.label}</div>
-			</div>
-		{/each}
-	</section>
-
-	<!-- Quick Actions -->
-	<section class="mb-8">
-		<h2 class="text-xl font-semibold text-white mb-4">Quick Actions</h2>
-		<div class="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
-			{#each quickActions as action}
-				<Card title={action.title} description={action.description}>
-					<div class="flex items-center justify-between">
-						<span class="text-3xl">{action.icon}</span>
-						<Button href={action.href} size="sm" variant={action.color === 'red' ? 'danger' : 'primary'}>
-							Go
-						</Button>
+<RouteGuard requiredRole="logistics">
+	<PageLayout 
+		title="Logistics Dashboard" 
+		subtitle="Welcome back, Logistics Provider • Track shipments and manage deliveries"
+	>
+		<!-- Quick Stats -->
+		<section class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
+			{#each stats as stat}
+				<div class="bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 rounded-xl p-6 hover:border-blue-500/30 transition-all">
+					<div class="flex items-center justify-between mb-2">
+						<span class="text-2xl">{stat.icon}</span>
+						<span class="text-xs text-green-400 font-medium">{stat.change}</span>
 					</div>
-				</Card>
+					<h3 class="text-white text-2xl font-bold mb-1">{stat.value}</h3>
+					<p class="text-gray-400 text-sm">{stat.label}</p>
+				</div>
 			{/each}
-		</div>
-	</section>
+		</section>
 
-	<div class="grid lg:grid-cols-3 gap-8">
+		<!-- Quick Actions -->
+		<section class="mb-8">
+			<h2 class="text-xl font-bold text-white mb-6">Quick Actions</h2>
+			<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+				{#each quickActions as action}
+					<a
+						href={action.href}
+						class="bg-gray-800 border border-gray-700 rounded-lg p-6 hover:border-{action.color}-500/50 hover:bg-{action.color}-500/5 transition-all group"
+					>
+						<div class="text-3xl mb-3 group-hover:scale-110 transition-transform">{action.icon}</div>
+						<h3 class="text-white font-semibold mb-1 group-hover:text-{action.color}-400 transition-colors">{action.title}</h3>
+						<p class="text-gray-400 text-sm">{action.description}</p>
+					</a>
+				{/each}
+			</div>
+		</section>
+
 		<!-- Active Shipments -->
-		<div class="lg:col-span-2">
-			<Card title="Active Shipments" description="Your current shipments and their status">
+		<div class="grid lg:grid-cols-2 gap-8 mb-8">
+			<Card title="Active Shipments" class="bg-gray-800 border-gray-700">
 				<div class="space-y-4">
 					{#each activeShipments as shipment}
-						<div class="bg-gray-800 rounded-lg p-4 hover:bg-gray-750 transition-colors">
-							<div class="flex items-start justify-between mb-3">
+						<div class="border border-gray-700 rounded-lg p-4 hover:border-blue-500/30 transition-colors">
+							<div class="flex justify-between items-start mb-3">
 								<div>
-									<h3 class="font-semibold text-white">{shipment.product}</h3>
-									<p class="text-gray-400 text-sm font-mono">{shipment.id}</p>
+									<h4 class="text-white font-semibold">{shipment.product}</h4>
+									<p class="text-gray-400 text-sm">{shipment.id}</p>
 								</div>
-								<span class="px-2 py-1 text-xs rounded-full {
-									shipment.status === 'In Transit' ? 'bg-blue-500/20 text-blue-400' :
-									shipment.status === 'Quality Check' ? 'bg-yellow-500/20 text-yellow-400' :
-									'bg-orange-500/20 text-orange-400'
-								}">
+								<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+									{shipment.status === 'In Transit' ? 'bg-blue-100 text-blue-800' :
+									shipment.status === 'Quality Check' ? 'bg-yellow-100 text-yellow-800' :
+									'bg-gray-100 text-gray-800'}">
 									{shipment.status}
 								</span>
 							</div>
 							
-							<div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm mb-4">
+							<div class="grid grid-cols-2 gap-2 text-sm mb-3">
 								<div>
-									<p class="text-gray-400">Route</p>
-									<p class="text-white">{shipment.origin} → {shipment.destination}</p>
+									<span class="text-gray-400">From:</span>
+									<span class="text-white ml-1">{shipment.origin}</span>
 								</div>
 								<div>
-									<p class="text-gray-400">Current Location</p>
-									<p class="text-white">{shipment.currentLocation}</p>
+									<span class="text-gray-400">To:</span>
+									<span class="text-white ml-1">{shipment.destination}</span>
 								</div>
 								<div>
-									<p class="text-gray-400">ETA</p>
-									<p class="text-white">{shipment.eta}</p>
+									<span class="text-gray-400">Location:</span>
+									<span class="text-white ml-1">{shipment.currentLocation}</span>
+								</div>
+								<div>
+									<span class="text-gray-400">Expected:</span>
+									<span class="text-white ml-1">{shipment.expectedDelivery}</span>
 								</div>
 							</div>
 
-							<div class="grid grid-cols-2 gap-4 text-sm mb-4">
-								<div>
-									<p class="text-gray-400">Temperature</p>
-									<p class="text-blue-400">{shipment.temperature}</p>
+							<div class="flex items-center justify-between">
+								<div class="flex items-center space-x-4 text-xs">
+									<span class="text-gray-400">🌡️ {shipment.temperature}</span>
+									<span class="text-gray-400">💧 {shipment.humidity}</span>
 								</div>
+								<Button size="sm" variant="outline">
+									Track
+								</Button>
+							</div>
+						</div>
+					{/each}
+				</div>
+			</Card>
+
+			<!-- Quality Alerts -->
+			<Card title="Quality Alerts" class="bg-gray-800 border-gray-700">
+				<div class="space-y-4">
+					{#each qualityAlerts as alert}
+						<div class="border border-gray-700 rounded-lg p-4 
+							{alert.severity === 'high' ? 'border-red-500/30 bg-red-500/5' : 
+							alert.severity === 'medium' ? 'border-yellow-500/30 bg-yellow-500/5' : 
+							'border-gray-500/30'}">
+							<div class="flex justify-between items-start mb-2">
 								<div>
-									<p class="text-gray-400">Last Updated</p>
-									<p class="text-gray-300">{shipment.lastUpdate}</p>
+									<h4 class="text-white font-semibold">{alert.product}</h4>
+									<p class="text-gray-400 text-sm">{alert.shipment}</p>
 								</div>
+								<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+									{alert.severity === 'high' ? 'bg-red-100 text-red-800' :
+									alert.severity === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+									'bg-gray-100 text-gray-800'}">
+									{alert.severity}
+								</span>
 							</div>
 							
-							<div class="flex gap-2">
-								<Button href="/logistics/shipments/{shipment.id}" variant="outline" size="sm">
-									Update Status
-								</Button>
-								<Button href="/product/{shipment.id}" variant="ghost" size="sm">
-									View Product
+							<p class="text-gray-300 text-sm mb-3">{alert.message}</p>
+							
+							<div class="flex items-center justify-between">
+								<span class="text-gray-400 text-xs">{alert.time}</span>
+								<Button size="sm" class="bg-blue-600 hover:bg-blue-700">
+									Resolve
 								</Button>
 							</div>
 						</div>
 					{/each}
 				</div>
-				
-				<div class="mt-6 pt-4 border-t border-gray-700">
-					<Button href="/logistics/shipments" variant="outline" class="w-full">
-						View All Shipments
-					</Button>
-				</div>
 			</Card>
 		</div>
-
-		<!-- Alerts & Notifications -->
-		<div>
-			<Card title="Recent Alerts" description="Important notifications from your shipments">
-				<div class="space-y-3">
-					{#each recentAlerts as alert}
-						<div class="flex items-start space-x-3 p-3 bg-gray-800 rounded-lg">
-							<div class="flex-shrink-0 w-2 h-2 rounded-full mt-2 {
-								alert.type === 'warning' ? 'bg-yellow-400' :
-								alert.type === 'success' ? 'bg-green-400' :
-								'bg-blue-400'
-							}"></div>
-							<div class="flex-1">
-								<p class="text-white text-sm">{alert.message}</p>
-								<p class="text-gray-400 text-xs mt-1">{alert.shipment} • {alert.time}</p>
-								{#if alert.action}
-									<p class="text-green-400 text-xs mt-1">Action: {alert.action}</p>
-								{/if}
-							</div>
-						</div>
-					{/each}
-				</div>
-				
-				<Button href="/notifications" variant="outline" size="sm" class="w-full mt-4">
-					View All Notifications
-				</Button>
-			</Card>
-
-			<!-- Performance Metrics -->
-			<div class="mt-6">
-				<Card title="This Month" description="Your performance metrics">
-					<div class="space-y-4">
-						<div class="flex items-center justify-between">
-							<span class="text-gray-300">Deliveries</span>
-							<span class="text-white font-semibold">156</span>
-						</div>
-						<div class="flex items-center justify-between">
-							<span class="text-gray-300">On-time Rate</span>
-							<span class="text-green-400 font-semibold">96%</span>
-						</div>
-						<div class="flex items-center justify-between">
-							<span class="text-gray-300">Quality Score</span>
-							<span class="text-green-400 font-semibold">9.8/10</span>
-						</div>
-						<div class="flex items-center justify-between">
-							<span class="text-gray-300">Revenue</span>
-							<span class="text-white font-semibold">$45,230</span>
-						</div>
-					</div>
-					
-					<Button href="/analytics" variant="outline" size="sm" class="w-full mt-4">
-						View Detailed Analytics
-					</Button>
-				</Card>
-			</div>
-
-			<!-- Quick Links -->
-			<div class="mt-6">
-				<Card title="Resources" description="Helpful links and tools">
-					<div class="space-y-2">
-						<Button href="/logistics/routes" variant="ghost" size="sm" class="w-full justify-start">
-							Route Optimizer
-						</Button>
-						<Button href="/logistics/weather" variant="ghost" size="sm" class="w-full justify-start">
-							Weather Forecast
-						</Button>
-						<Button href="/compliance" variant="ghost" size="sm" class="w-full justify-start">
-							Compliance Docs
-						</Button>
-						<Button href="/settings" variant="ghost" size="sm" class="w-full justify-start">
-							Account Settings
-						</Button>
-					</div>
-				</Card>
-			</div>
-		</div>
-	</div>
-</PageLayout>
+	</PageLayout>
+</RouteGuard>

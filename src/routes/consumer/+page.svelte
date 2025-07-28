@@ -2,33 +2,30 @@
 	import PageLayout from '$lib/components/PageLayout.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Card from '$lib/components/Card.svelte';
-	import { getUserAddress, getUserProducts, getUserRole } from '$lib/web3';
+	import RouteGuard from '$lib/components/RouteGuard.svelte';
+	import { getUserAddress, getUserProducts } from '$lib/web3';
+	import { getConsumerRequests } from '$lib/services/marketplace-service';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 
 	// State management
 	let userAddress: string | null = $state(null);
-	let userRole: string | null = $state(null);
 	let loading = $state(true);
 	let error = $state('');
 	let userProducts = $state<any[]>([]);
+	let userRequests = $state<any[]>([]);
 
-	// Check authentication and role on mount
+	// Load user data on mount
 	onMount(async () => {
 		try {
 			const address = await getUserAddress();
-			const role = await getUserRole();
-			
 			userAddress = address;
-			userRole = role;
-			
-			if (!address || (role !== 'consumer' && role !== 'admin')) {
-				goto('/connect');
-				return;
-			}
 
-			// Load user's products
-			await loadUserProducts();
+			// Load user's products and requests
+			await Promise.all([
+				loadUserProducts(),
+				loadUserRequests()
+			]);
 		} catch (err) {
 			console.error('Authentication check failed:', err);
 			goto('/connect');
@@ -47,58 +44,49 @@
 		}
 	}
 
-	const stats = $derived([
-		{ label: 'Products Owned', value: userProducts.length.toString(), change: '+3%', icon: '📦' },
-		{ label: 'Verified This Month', value: '47', change: '+15%', icon: '✅' },
-		{ label: 'Watchlisted', value: '8', change: '+2%', icon: '👁️' },
-		{ label: 'Alerts Received', value: '2', change: '-50%', icon: '🔔' }
-	]);
+	async function loadUserRequests() {
+		try {
+			console.log('🔄 Refreshing consumer requests...');
+			const requests = await getConsumerRequests(userAddress!);
+			userRequests = requests;
+			console.log('✅ Consumer requests refreshed:', requests);
+		} catch (err) {
+			console.error('Failed to load user requests:', err);
+		}
+	}
+
+	// Manual refresh function for testing
+	async function handleRefreshRequests() {
+		console.log('🔄 Manual refresh triggered by user');
+		await loadUserRequests();
+	}
+
+	const stats = $derived.by(() => {
+		const totalProducts = userProducts.length;
+		const pendingRequests = userRequests.filter(r => r.status === 'pending').length;
+		const approvedRequests = userRequests.filter(r => r.status === 'approved').length;
+		const thisMonth = new Date().getMonth();
+		const thisYear = new Date().getFullYear();
+		const thisMonthProducts = userProducts.filter(p => {
+			const productDate = new Date(p.purchaseDate || p.deliveryDate || new Date());
+			return productDate.getMonth() === thisMonth && productDate.getFullYear() === thisYear;
+		}).length;
+
+		return [
+			{ label: 'Products Owned', value: totalProducts.toString(), change: `+${thisMonthProducts}`, icon: '📦' },
+			{ label: 'Pending Requests', value: pendingRequests.toString(), change: 'active', icon: '⏳' },
+			{ label: 'Approved Requests', value: approvedRequests.toString(), change: 'this month', icon: '✅' },
+			{ label: 'Total Requests', value: userRequests.length.toString(), change: 'all time', icon: '�' }
+		];
+	});
 
 	const ownedProducts = $derived(userProducts);
 
-	const watchlist = [
-		{
-			id: 'PVC-2025-015',
-			name: 'Limited Edition Watch',
-			manufacturer: 'Swiss Timepieces',
-			currentLocation: 'Geneva Workshop',
-			status: 'In Production',
-			estimatedDelivery: '2025-03-15',
-			notifyOnStatus: ['Quality Check', 'Shipped', 'Delivered']
-		},
-		{
-			id: 'PVC-2025-018',
-			name: 'Vintage Wine Collection',
-			manufacturer: 'Bordeaux Vineyards',
-			currentLocation: 'French Countryside',
-			status: 'Aging Process',
-			estimatedDelivery: '2025-12-01',
-			notifyOnStatus: ['Bottled', 'Shipped']
-		}
-	];
+	// Watchlist - will be implemented with real data from blockchain
+	const watchlist: any[] = [];
 
-	const recentActivity = [
-		{
-			type: 'verification',
-			message: 'Verified authenticity of Premium Coffee',
-			product: 'PVC-2025-001',
-			time: '2 hours ago',
-			icon: '✅'
-		},
-		{
-			type: 'alert',
-			message: 'Quality alert resolved for Tea Collection',
-			product: 'PVC-2025-012',
-			time: '1 day ago',
-			icon: '🔔'
-		},
-		{
-			type: 'purchase',
-			message: 'Added Swiss Watch to watchlist',
-			product: 'PVC-2025-015',
-			time: '3 days ago',
-			icon: '👁️'
-		}
+	const recentActivity: any[] = [
+		// Activity will be loaded from user's actual blockchain transactions
 	];
 
 	const quickActions = [
@@ -133,10 +121,11 @@
 	];
 </script>
 
-<PageLayout 
-	title="Consumer Dashboard" 
-	subtitle="Welcome back, Consumer • Track your products and verify authenticity"
->
+<RouteGuard requiredRole="consumer">
+	<PageLayout 
+		title="Consumer Dashboard" 
+		subtitle="Welcome back, Consumer • Track your products and verify authenticity"
+	>
 	{#if loading}
 		<div class="text-center py-8">
 			<div class="text-blue-400">Loading your dashboard...</div>
@@ -164,7 +153,12 @@
 
 	<!-- Quick Actions -->
 	<section class="mb-8">
-		<h2 class="text-xl font-semibold text-white mb-4">Quick Actions</h2>
+		<div class="flex items-center justify-between mb-4">
+			<h2 class="text-xl font-semibold text-white">Quick Actions</h2>
+			<Button onclick={handleRefreshRequests} class="bg-blue-600 hover:bg-blue-700">
+				🔄 Refresh Requests
+			</Button>
+		</div>
 		<div class="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
 			{#each quickActions as action}
 				<Card title={action.title} description={action.description}>
@@ -319,9 +313,10 @@
 							<span class="text-blue-400">3</span>
 						</div>
 					</div>
-				</Card>
-			</div>
+			</Card>
 		</div>
 	</div>
-	{/if}
+</div>
+{/if}
 </PageLayout>
+</RouteGuard>

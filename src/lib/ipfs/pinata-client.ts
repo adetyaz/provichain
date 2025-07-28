@@ -1,10 +1,6 @@
-// Pinata IPFS service for metadata storage
-import type { ProductMetadata } from './types';
-
-// Use the actual credentials directly (in production, use proper env vars)
-const PINATA_API_KEY = '8506b7009f5d327de610';
-const PINATA_SECRET_KEY = '2ee092df00b03f2cbcf6bf58d833fd970555f6e883232ef1d8b2c958b1e330f7';
-const PINATA_BASE_URL = 'https://api.pinata.cloud';
+// Pinata IPFS service module
+import { CONFIG } from '$lib/config/environment';
+import type { ProductMetadata } from '$lib/types';
 
 // Upload metadata to Pinata IPFS
 export async function uploadMetadataToPinata(
@@ -62,12 +58,12 @@ export async function uploadMetadataToPinata(
 			pinataMetadata: pinataMetadata
 		});
 
-		const response = await fetch(`${PINATA_BASE_URL}/pinning/pinJSONToIPFS`, {
+		const response = await fetch(`${CONFIG.pinata.baseUrl}/pinning/pinJSONToIPFS`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
-				pinata_api_key: PINATA_API_KEY,
-				pinata_secret_api_key: PINATA_SECRET_KEY
+				pinata_api_key: CONFIG.pinata.apiKey,
+				pinata_secret_api_key: CONFIG.pinata.secretKey
 			},
 			body: data
 		});
@@ -87,7 +83,7 @@ export async function uploadMetadataToPinata(
 // Retrieve metadata from Pinata IPFS
 export async function getMetadataFromPinata(ipfsHash: string): Promise<ProductMetadata> {
 	try {
-		const response = await fetch(`https://gateway.pinata.cloud/ipfs/${ipfsHash}`);
+		const response = await fetch(`${CONFIG.pinata.gateway}${ipfsHash}`);
 
 		if (!response.ok) {
 			throw new Error(`Failed to fetch from IPFS: ${response.statusText}`);
@@ -115,11 +111,11 @@ export async function uploadImageToPinata(file: File): Promise<string> {
 		});
 		formData.append('pinataMetadata', metadata);
 
-		const response = await fetch(`${PINATA_BASE_URL}/pinning/pinFileToIPFS`, {
+		const response = await fetch(`${CONFIG.pinata.baseUrl}/pinning/pinFileToIPFS`, {
 			method: 'POST',
 			headers: {
-				pinata_api_key: PINATA_API_KEY,
-				pinata_secret_api_key: PINATA_SECRET_KEY
+				pinata_api_key: CONFIG.pinata.apiKey,
+				pinata_secret_api_key: CONFIG.pinata.secretKey
 			},
 			body: formData
 		});
@@ -140,12 +136,12 @@ export async function uploadImageToPinata(file: File): Promise<string> {
 export async function listProductFiles(productId: string) {
 	try {
 		const response = await fetch(
-			`${PINATA_BASE_URL}/data/pinList?metadata[keyvalues][productId]=${productId}`,
+			`${CONFIG.pinata.baseUrl}/data/pinList?metadata[keyvalues][productId]=${productId}`,
 			{
 				method: 'GET',
 				headers: {
-					pinata_api_key: PINATA_API_KEY,
-					pinata_secret_api_key: PINATA_SECRET_KEY
+					pinata_api_key: CONFIG.pinata.apiKey,
+					pinata_secret_api_key: CONFIG.pinata.secretKey
 				}
 			}
 		);
@@ -168,15 +164,15 @@ export async function listProductsByManufacturer(manufacturerAddress: string) {
 		console.log('🔍 Querying Pinata for products from manufacturer:', manufacturerAddress);
 
 		// Try a simpler approach first - get all files and filter client-side
-		const url = `${PINATA_BASE_URL}/data/pinList?status=pinned&pageLimit=1000`;
+		const url = `${CONFIG.pinata.baseUrl}/data/pinList?status=pinned&pageLimit=1000`;
 
 		console.log('📡 Request URL:', url);
 
 		const response = await fetch(url, {
 			method: 'GET',
 			headers: {
-				pinata_api_key: PINATA_API_KEY,
-				pinata_secret_api_key: PINATA_SECRET_KEY
+				pinata_api_key: CONFIG.pinata.apiKey,
+				pinata_secret_api_key: CONFIG.pinata.secretKey
 			}
 		});
 
@@ -217,10 +213,6 @@ export async function listProductsByManufacturer(manufacturerAddress: string) {
 					return hasManufacturer && isProduct;
 				}
 			) || [];
-
-		console.log(
-			`📦 Found ${manufacturerFiles.length} product files for manufacturer ${manufacturerAddress}`
-		);
 
 		console.log(
 			`📦 Found ${manufacturerFiles.length} product files for manufacturer ${manufacturerAddress}`

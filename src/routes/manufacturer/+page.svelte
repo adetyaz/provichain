@@ -2,25 +2,37 @@
 	import PageLayout from '$lib/components/PageLayout.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Card from '$lib/components/Card.svelte';
-	import { checkUserRole, mintProduct, getUserAddress, updateQualityData, setQualityThresholds, createShipment, updateLocation } from '$lib/web3';
+	import RouteGuard from '$lib/components/RouteGuard.svelte';
+	import { mintProduct, getManufacturerProducts, getUserAddress } from '$lib';
+	import { getPendingRequests } from '$lib/services/marketplace-service';
+	import { debugRequestStatus, debugAllRequestsForManufacturer } from '$lib/debug-blockchain';
+	import { debugApprovalWorkflow, debugContractState } from '$lib/debug-approval';
+	import { testSmartContractDirectly, debugRequestStorage } from '$lib/debug-contract';
+	import {
+		waitForOperationConfirmation,
+		checkMassaNetworkStatus,
+		retryApprovalWithBetterFee
+	} from '$lib/operation-monitor';
+	import { user } from '$lib/stores/auth';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 
-	// State management - Svelte 5 syntax
-	let isManufacturer = $state(false);
 	let userAddress = $state('');
 	let loading = $state(true);
+	let minting = $state(false);
 	let error = $state('');
 	let success = $state('');
+	let totalProducts = $state(0);
+	let pendingRequests = $state<any[]>([]);
 
-	// Product form data - Svelte 5 syntax
 	let productForm = $state({
 		id: '',
 		name: '',
 		batch: '',
+		quantity: 1,
 		description: '',
 		category: '',
-		// ASC Configuration
+		// Advanced Configuration
 		enableQualityMonitoring: true,
 		temperatureThreshold: '25',
 		humidityThreshold: '70',
@@ -30,85 +42,61 @@
 		insuranceValue: ''
 	});
 
-	// Quality monitoring form
-	let qualityForm = $state({
-		productId: '',
-		temperature: '',
-		humidity: ''
-	});
+	let isFormValid = $derived(
+		productForm.name.trim() !== '' && productForm.batch.trim() !== '' && productForm.quantity > 0
+	);
 
-	// Location tracking form
-	let locationForm = $state({
-		productId: '',
-		location: '',
-		latitude: '',
-		longitude: ''
-	});
-
-	// Shipment creation form
-	let shipmentForm = $state({
-		productId: '',
-		origin: '',
-		destination: '',
-		carrier: ''
-	});
-
-	// Check if user has manufacturer role
 	onMount(async () => {
 		try {
 			loading = true;
+			error = '';
+
 			userAddress = await getUserAddress();
-			isManufacturer = await checkUserRole('MANUFACTURER');
-			
+
 			if (!userAddress) {
 				goto('/connect');
 				return;
 			}
-			
-			if (!isManufacturer) {
-				error = 'You need MANUFACTURER role to access this page';
-			}
+
+			const products = await getManufacturerProducts(userAddress);
+			totalProducts = products.length;
+
+			// Load pending requests
+			await loadPendingRequests();
+
+			productForm.id = generateProductId();
 		} catch (err) {
-			error = 'Failed to load manufacturer dashboard';
+			error =
+				'Failed to load manufacturer data: ' + (err instanceof Error ? err.message : String(err));
 			console.error('Manufacturer page error:', err);
 		} finally {
 			loading = false;
 		}
 	});
 
-	// Generate unique product ID
 	function generateProductId() {
-		const timestamp = Date.now();
-		const random = Math.random().toString(36).substring(2, 8);
-		return `PROD-${timestamp}-${random.toUpperCase()}`;
+		const timestamp = Date.now().toString();
+		const randomNum = Math.floor(Math.random() * 1000)
+			.toString()
+			.padStart(3, '0');
+		return `PVC-${timestamp.slice(-8)}-${randomNum}`;
 	}
 
-	// Handle product minting
-	async function handleMintProduct(event: Event) {
-		event.preventDefault();
-		
-		if (!productForm.name || !productForm.batch) {
-			error = 'Please fill in required fields';
-			return;
-		}
+	async function handleMintProduct() {
+		if (!isFormValid) return;
 
 		try {
-			loading = true;
+			minting = true;
 			error = '';
 			success = '';
-
-			// Generate product ID if not provided
-			if (!productForm.id) {
-				productForm.id = generateProductId();
-			}
 
 			const result = await mintProduct({
 				id: productForm.id,
 				name: productForm.name,
 				batch: productForm.batch,
+				quantity: productForm.quantity,
 				description: productForm.description,
 				category: productForm.category,
-				// ASC Configuration
 				ascConfig: {
 					enableQualityMonitoring: productForm.enableQualityMonitoring,
 					temperatureThreshold: productForm.temperatureThreshold,
@@ -121,12 +109,18 @@
 			});
 
 			if (result.success) {
-				success = `Product ${productForm.id} minted successfully! IPFS Hash: ${result.ipfsHash}`;
-				// Reset form
+				success = `Product minted successfully! Operation ID: ${result.operationId}`;
+				totalProducts += 1;
+
+				setTimeout(() => {
+					goto(`/product/${result.productId}?minted=true`);
+				}, 2000);
+
 				productForm = {
-					id: '',
+					id: generateProductId(),
 					name: '',
 					batch: '',
+					quantity: 1,
 					description: '',
 					category: '',
 					enableQualityMonitoring: true,
@@ -141,514 +135,557 @@
 				error = result.error || 'Failed to mint product';
 			}
 		} catch (err) {
-			error = 'Error minting product: ' + (err instanceof Error ? err.message : String(err));
+			error = 'Minting failed: ' + (err instanceof Error ? err.message : String(err));
 		} finally {
-			loading = false;
+			minting = false;
 		}
 	}
 
-	// Handle quality data update
-	async function updateQuality() {
-		try {
-			loading = true;
-			error = '';
-			success = '';
+	function resetForm() {
+		productForm = {
+			id: generateProductId(),
+			name: '',
+			batch: '',
+			quantity: 1,
+			description: '',
+			category: '',
+			enableQualityMonitoring: true,
+			temperatureThreshold: '25',
+			humidityThreshold: '70',
+			enablePaymentAutomation: false,
+			paymentConditions: 'delivery_confirmation',
+			enableInsurance: false,
+			insuranceValue: ''
+		};
+		error = '';
+		success = '';
+	}
 
-			const result = await updateQualityData(
-				qualityForm.productId,
-				parseFloat(qualityForm.temperature),
-				parseFloat(qualityForm.humidity)
-			);
+	// Load pending product requests
+	async function loadPendingRequests() {
+		try {
+			pendingRequests = await getPendingRequests(userAddress);
+		} catch (err) {
+			console.error('Failed to load pending requests:', err);
+		}
+	}
+
+	// Debug blockchain state
+	async function handleDebugBlockchain() {
+		try {
+			console.log('🔍 DEBUG: Checking blockchain state...');
+			const result = await debugAllRequestsForManufacturer(userAddress);
+			console.log('🔍 DEBUG RESULT:', result);
+
+			// Also debug the first pending request if any
+			if (pendingRequests.length > 0) {
+				const firstRequest = pendingRequests[0];
+				console.log('🔍 Debugging first request:', firstRequest.id);
+				const requestDetails = await debugRequestStatus(firstRequest.id);
+				console.log('🔍 Request details from blockchain:', requestDetails);
+			}
+		} catch (error) {
+			console.error('❌ Debug failed:', error);
+		}
+	}
+
+	// Test approval workflow on first pending request
+	async function handleTestApproval() {
+		if (pendingRequests.length === 0) {
+			console.log('❌ No pending requests to test approval on');
+			return;
+		}
+
+		const firstRequest = pendingRequests[0];
+		console.log('🧪 Testing approval workflow on request:', firstRequest.id);
+
+		try {
+			const result = await debugApprovalWorkflow(firstRequest.id);
+			console.log('🧪 Approval workflow result:', result);
 
 			if (result.success) {
-				success = `Quality data updated for ${qualityForm.productId}`;
-				qualityForm = { productId: '', temperature: '', humidity: '' };
+				success = `Test approval successful! Operation: ${result.operationId}`;
+				// Refresh pending requests
+				await loadPendingRequests();
 			} else {
-				error = result.message || 'Failed to update quality data';
+				error = `Test approval failed: ${result.error}`;
 			}
-		} catch (err) {
-			error = 'Error updating quality: ' + (err instanceof Error ? err.message : String(err));
-		} finally {
-			loading = false;
+		} catch (testError) {
+			console.error('❌ Test approval failed:', testError);
+			error = 'Test approval failed: ' + testError;
 		}
 	}
 
-	// Handle location update
-	async function updateProductLocation() {
+	// Debug contract state
+	async function handleDebugContract() {
 		try {
-			loading = true;
-			error = '';
-			success = '';
+			console.log('🔍 DEBUG: Checking contract state...');
+			const result = await debugContractState();
+			console.log('🔍 CONTRACT DEBUG RESULT:', result);
+		} catch (error) {
+			console.error('❌ Contract debug failed:', error);
+		}
+	}
 
-			const result = await updateLocation(
-				locationForm.productId,
-				locationForm.location,
-				parseFloat(locationForm.latitude),
-				parseFloat(locationForm.longitude)
-			);
+	// Test smart contract directly
+	async function handleTestContractDirect() {
+		if (pendingRequests.length === 0) {
+			console.log('❌ No pending requests to test');
+			return;
+		}
+
+		const firstRequest = pendingRequests[0];
+		console.log('🔧 Testing smart contract directly on request:', firstRequest.id);
+
+		try {
+			const result = await testSmartContractDirectly(firstRequest.id);
+			console.log('🔧 Direct contract test result:', result);
 
 			if (result.success) {
-				success = `Location updated for ${locationForm.productId}`;
-				locationForm = { productId: '', location: '', latitude: '', longitude: '' };
+				success = `Direct contract test successful! Operation: ${result.operationId}`;
+				await loadPendingRequests();
 			} else {
-				error = result.message || 'Failed to update location';
+				error = `Direct contract test failed: ${result.error}`;
 			}
-		} catch (err) {
-			error = 'Error updating location: ' + (err instanceof Error ? err.message : String(err));
-		} finally {
-			loading = false;
+		} catch (testError) {
+			console.error('❌ Direct contract test failed:', testError);
+			error = 'Direct contract test failed: ' + testError;
 		}
 	}
 
-	// Handle shipment creation
-	async function createProductShipment() {
-		try {
-			loading = true;
-			error = '';
-			success = '';
+	// Debug request storage
+	async function handleDebugStorage() {
+		if (pendingRequests.length === 0) {
+			console.log('❌ No pending requests to debug storage');
+			return;
+		}
 
-			const result = await createShipment(
-				shipmentForm.productId,
-				shipmentForm.origin,
-				shipmentForm.destination,
-				shipmentForm.carrier
-			);
+		const firstRequest = pendingRequests[0];
+		console.log('📖 Debugging storage for request:', firstRequest.id);
+
+		try {
+			const result = await debugRequestStorage(firstRequest.id);
+			console.log('📖 Storage debug result:', result);
+		} catch (error) {
+			console.error('❌ Storage debug failed:', error);
+		}
+	}
+
+	// Check network status
+	async function handleCheckNetwork() {
+		try {
+			console.log('🌐 Checking Massa network status...');
+			const result = await checkMassaNetworkStatus();
+			console.log('🌐 Network status result:', result);
+		} catch (error) {
+			console.error('❌ Network check failed:', error);
+		}
+	}
+
+	// Retry approval with higher fee
+	async function handleRetryWithHigherFee() {
+		if (pendingRequests.length === 0) {
+			console.log('❌ No pending requests to retry');
+			return;
+		}
+
+		const firstRequest = pendingRequests[0];
+		console.log('🔄 Retrying approval with higher fee for request:', firstRequest.id);
+
+		try {
+			const result = await retryApprovalWithBetterFee(firstRequest.id);
+			console.log('🔄 Retry result:', result);
 
 			if (result.success) {
-				success = `Shipment created for ${shipmentForm.productId}`;
-				shipmentForm = { productId: '', origin: '', destination: '', carrier: '' };
+				success = `Retry successful! Check operation: ${result.operationId}`;
+				console.log('🔗 Massa Explorer:', result.explorerUrl);
 			} else {
-				error = result.message || 'Failed to create shipment';
+				error = `Retry failed: ${result.error}`;
 			}
-		} catch (err) {
-			error = 'Error creating shipment: ' + (err instanceof Error ? err.message : String(err));
-		} finally {
-			loading = false;
+		} catch (retryError) {
+			console.error('❌ Retry failed:', retryError);
+			error = 'Retry failed: ' + retryError;
 		}
 	}
 
-	// Sample stats for display - Svelte 5 syntax
-	let stats = $derived([
-		{ label: 'Your Address', value: userAddress ? userAddress.slice(0, 8) + '...' : 'Loading...', icon: '👤' },
-		{ label: 'Role Status', value: isManufacturer ? 'MANUFACTURER' : 'NO ROLE', icon: '🏭' },
-		{ label: 'Products Minted', value: '0', icon: '📦' },
-		{ label: 'Blockchain', value: 'Massa', icon: '⛓️' }
+	let dashboardStats = $derived([
+		{ label: 'Products', value: totalProducts.toString(), icon: '📦' },
+		{ label: 'Pending Requests', value: pendingRequests.length.toString(), icon: '📋' }
 	]);
 </script>
 
-<PageLayout title="Manufacturer Dashboard" subtitle="Mint and manage your products on the blockchain">
-	<div class="manufacturer-dashboard">
-		{#if loading}
-			<div class="text-center py-8">
-				<div class="text-blue-400">Loading manufacturer dashboard...</div>
-			</div>
-		{:else if error && !isManufacturer}
-			<div class="bg-red-900/20 border border-red-500 rounded-lg p-4 mb-6">
-				<div class="text-red-400 font-medium">{error}</div>
-				<div class="text-red-300 text-sm mt-2">
-					You need to request MANUFACTURER role first. 
-					<a href="/connect" class="underline">Go to role assignment</a>
+<RouteGuard requiredRole="manufacturer">
+	<PageLayout
+		title="Manufacturer Dashboard"
+		subtitle="Mint and manage your products on the blockchain"
+	>
+		<div class="manufacturer-dashboard">
+			{#if loading}
+				<div class="flex items-center justify-center py-16">
+					<div class="text-center">
+						<div
+							class="mx-auto mb-4 h-12 w-12 animate-spin rounded-full border-b-2 border-green-400"
+						></div>
+						<div class="text-lg text-green-400">Loading manufacturer dashboard...</div>
+					</div>
 				</div>
-			</div>
-		{:else}
-			<!-- Stats Grid -->
-			<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-				{#each stats as stat}
-					<Card title={stat.label} class="bg-gray-800 border-gray-700">
-						<div class="flex items-center justify-between">
-							<div>
-								<p class="text-white text-2xl font-semibold mt-1">{stat.value}</p>
-							</div>
-							<div class="text-3xl">{stat.icon}</div>
+			{:else}
+				<!-- Dashboard Stats -->
+				<div class="mb-8 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+					{#each dashboardStats as stat}
+						{#if stat.label === 'Pending Requests'}
+							<button
+								onclick={() => goto('/manufacturer/requests')}
+								class="text-left {stat.label === 'Pending Requests'
+									? 'cursor-pointer transition-opacity hover:opacity-90'
+									: ''}"
+							>
+								<Card
+									title={stat.label}
+									class="border-gray-700 bg-gray-800 transition-colors hover:border-blue-500/50"
+								>
+									<div class="flex items-center justify-between">
+										<div>
+											<p class="text-3xl font-bold text-white">{stat.value}</p>
+											<p class="text-sm text-gray-400">{stat.label}</p>
+										</div>
+										<div class="text-4xl">{stat.icon}</div>
+									</div>
+									{#if parseInt(stat.value) > 0}
+										<div class="mt-2">
+											<p class="text-xs text-blue-400">Click to manage →</p>
+										</div>
+									{/if}
+								</Card>
+							</button>
+						{:else}
+							<Card title={stat.label} class="border-gray-700 bg-gray-800">
+								<div class="flex items-center justify-between">
+									<div>
+										<p class="text-3xl font-bold text-white">{stat.value}</p>
+										<p class="text-sm text-gray-400">{stat.label}</p>
+									</div>
+									<div class="text-4xl">{stat.icon}</div>
+								</div>
+							</Card>
+						{/if}
+					{/each}
+
+					<!-- Quick Actions -->
+					<Card title="Quick Actions" class="border-gray-700 bg-gray-800">
+						<div class="space-y-3">
+							<Button
+								onclick={() => goto('/manufacturer/products')}
+								class="w-full bg-blue-600 hover:bg-blue-700"
+							>
+								View Products
+							</Button>
+							<Button
+								onclick={() => goto('/manufacturer/launchpad')}
+								class="w-full bg-purple-600 hover:bg-purple-700"
+							>
+								Launchpad
+							</Button>
+							<!-- <Button onclick={handleDebugBlockchain} class="w-full bg-red-600 hover:bg-red-700">
+								🔍 Debug Blockchain
+							</Button> -->
 						</div>
 					</Card>
-				{/each}
-			</div>
 
-			<!-- Product Minting Form -->
-			<div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-				<!-- Mint New Product -->
-				<Card title="🏭 Mint New Product" class="bg-gray-800 border-gray-700">
-					{#if success}
-						<div class="bg-green-900/20 border border-green-500 rounded-lg p-4 mb-6">
-							<div class="text-green-400">{success}</div>
+					<!-- Debug Tools -->
+					<!-- <Card title="Debug Tools" class="bg-gray-800 border-gray-700">
+						<div class="space-y-3">
+							<Button onclick={handleTestApproval} class="w-full bg-orange-600 hover:bg-orange-700">
+								🧪 Test Approval
+							</Button>
+							<Button onclick={handleDebugContract} class="w-full bg-yellow-600 hover:bg-yellow-700">
+								📊 Contract State
+							</Button>
+							<Button onclick={handleTestContractDirect} class="w-full bg-purple-600 hover:bg-purple-700">
+								🔧 Direct Contract Test
+							</Button>
+							<Button onclick={handleDebugStorage} class="w-full bg-indigo-600 hover:bg-indigo-700">
+								📖 Storage Debug
+							</Button>
 						</div>
-					{/if}
+					</Card> -->
 
-					{#if error}
-						<div class="bg-red-900/20 border border-red-500 rounded-lg p-4 mb-6">
-							<div class="text-red-400">{error}</div>
+					<!-- Network Tools -->
+					<!-- <Card title="Network Tools" class="bg-gray-800 border-gray-700">
+						<div class="space-y-3">
+							<Button onclick={handleCheckNetwork} class="w-full bg-green-600 hover:bg-green-700">
+								🌐 Check Network
+							</Button>
+							<Button onclick={handleRetryWithHigherFee} class="w-full bg-red-600 hover:bg-red-700">
+								🔄 Retry High Fee
+							</Button>
 						</div>
-					{/if}
+					</Card> -->
+				</div>
 
-					<form onsubmit={handleMintProduct} class="space-y-4">
-						<div>
-							<label for="product-id" class="block text-gray-300 text-sm font-medium mb-2">
-								Product ID (Optional - will auto-generate)
-							</label>
-							<input
-								id="product-id"
-								type="text"
-								bind:value={productForm.id}
-								placeholder="Leave empty to auto-generate"
-								class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-							/>
-						</div>
+				{#if error}
+					<div class="mb-6 rounded-lg border border-red-500 bg-red-900/20 p-4">
+						<div class="font-medium text-red-400">{error}</div>
+					</div>
+				{/if}
 
-						<div>
-							<label for="product-name" class="block text-gray-300 text-sm font-medium mb-2">
-								Product Name *
-							</label>
-							<input
-								id="product-name"
-								type="text"
-								bind:value={productForm.name}
-								placeholder="Enter product name"
-								required
-								class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-							/>
-						</div>
+				{#if success}
+					<div class="mb-6 rounded-lg border border-green-500 bg-green-900/20 p-4">
+						<div class="font-medium text-green-400">{success}</div>
+					</div>
+				{/if}
 
-						<div>
-							<label for="product-batch" class="block text-gray-300 text-sm font-medium mb-2">
-								Batch Number *
-							</label>
-							<input
-								id="product-batch"
-								type="text"
-								bind:value={productForm.batch}
-								placeholder="Enter batch number"
-								required
-								class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-							/>
-						</div>
+				<!-- Product Minting Form -->
+				<div class="grid grid-cols-1 gap-8 lg:grid-cols-2">
+					<!-- Form Section -->
+					<Card title="Mint New Product" class="border-gray-700 bg-gray-800">
+						<form class="space-y-6">
+							<div>
+								<label for="product-id" class="mb-2 block text-sm font-medium text-green-400"
+									>Product ID</label
+								>
+								<input
+									id="product-id"
+									bind:value={productForm.id}
+									type="text"
+									readonly
+									class="w-full rounded-lg border border-gray-600 bg-gray-700 px-3 py-2 font-mono text-sm text-gray-300"
+								/>
+								<p class="mt-1 text-xs text-gray-400">Auto-generated unique identifier</p>
+							</div>
 
-						<div>
-							<label for="product-description" class="block text-gray-300 text-sm font-medium mb-2">
-								Description
-							</label>
-							<textarea
-								id="product-description"
-								bind:value={productForm.description}
-								placeholder="Product description"
-								rows="3"
-								class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-							></textarea>
-						</div>
+							<div>
+								<label for="product-name" class="mb-2 block text-sm font-medium text-green-400"
+									>Product Name *</label
+								>
+								<input
+									id="product-name"
+									bind:value={productForm.name}
+									type="text"
+									required
+									placeholder="Enter product name"
+									class="w-full rounded-lg border border-gray-600 bg-gray-700 px-3 py-2 text-white
+										transition-colors focus:border-green-500 focus:ring-1 focus:ring-green-500"
+								/>
+							</div>
 
-						<div>
-							<label for="product-category" class="block text-gray-300 text-sm font-medium mb-2">
-								Category
-							</label>
-							<select
-								id="product-category"
-								bind:value={productForm.category}
-								class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-							>
-								<option value="">Select category</option>
-								<option value="food">Food & Beverages</option>
-								<option value="electronics">Electronics</option>
-								<option value="textiles">Textiles</option>
-								<option value="pharmaceuticals">Pharmaceuticals</option>
-								<option value="other">Other</option>
-							</select>
-						</div>
+							<!-- Batch Number -->
+							<div>
+								<label for="batch-number" class="mb-2 block text-sm font-medium text-green-400"
+									>Batch Number *</label
+								>
+								<input
+									id="batch-number"
+									bind:value={productForm.batch}
+									type="text"
+									required
+									placeholder="B-2025-001"
+									class="w-full rounded-lg border border-gray-600 bg-gray-700 px-3 py-2 text-white
+										transition-colors focus:border-green-500 focus:ring-1 focus:ring-green-500"
+								/>
+							</div>
 
-						<!-- ASC Configuration -->
-						<div class="border-t border-gray-600 pt-6 mt-6">
-							<h3 class="text-lg font-medium text-white mb-4 flex items-center gap-2">
-								🤖 Autonomous Smart Contract (ASC) Configuration
-							</h3>
-							
-							<!-- Quality Monitoring -->
-							<div class="mb-4">
-								<label class="flex items-center gap-3">
+							<!-- Quantity -->
+							<div>
+								<label for="quantity" class="mb-2 block text-sm font-medium text-green-400"
+									>Quantity *</label
+								>
+								<input
+									id="quantity"
+									bind:value={productForm.quantity}
+									type="number"
+									required
+									min="1"
+									class="w-full rounded-lg border border-gray-600 bg-gray-700 px-3 py-2 text-white
+										transition-colors focus:border-green-500 focus:ring-1 focus:ring-green-500"
+								/>
+							</div>
+
+							<!-- Category -->
+							<div>
+								<label for="category" class="mb-2 block text-sm font-medium text-green-400"
+									>Category</label
+								>
+								<select
+									id="category"
+									bind:value={productForm.category}
+									class="w-full rounded-lg border border-gray-600 bg-gray-700 px-3 py-2 text-white
+										transition-colors focus:border-green-500 focus:ring-1 focus:ring-green-500"
+								>
+									<option value="">Select category...</option>
+									<option value="food">Food & Beverages</option>
+									<option value="pharmaceutical">Pharmaceutical</option>
+									<option value="electronics">Electronics</option>
+									<option value="textile">Textile</option>
+									<option value="automotive">Automotive</option>
+									<option value="luxury">Luxury Goods</option>
+									<option value="other">Other</option>
+								</select>
+							</div>
+
+							<!-- Description -->
+							<div>
+								<label for="description" class="mb-2 block text-sm font-medium text-green-400"
+									>Description</label
+								>
+								<textarea
+									id="description"
+									bind:value={productForm.description}
+									rows="3"
+									placeholder="Product description..."
+									class="w-full resize-none rounded-lg border border-gray-600 bg-gray-700 px-3 py-2
+										text-white transition-colors focus:border-green-500 focus:ring-1 focus:ring-green-500"
+								></textarea>
+							</div>
+
+							<div class="flex space-x-4 pt-4">
+								<Button onclick={handleMintProduct} class="flex-1 bg-green-600 hover:bg-green-700">
+									{#if minting}
+										<svg class="mr-2 h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+											<circle
+												class="opacity-25"
+												cx="12"
+												cy="12"
+												r="10"
+												stroke="currentColor"
+												stroke-width="4"
+											/>
+											<path
+												class="opacity-75"
+												fill="currentColor"
+												d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+											/>
+										</svg>
+										Minting...
+									{:else}
+										🚀 Mint Product
+									{/if}
+								</Button>
+
+								<Button onclick={resetForm} class="bg-gray-600 hover:bg-gray-700">Reset</Button>
+							</div>
+						</form>
+					</Card>
+
+					<Card title="ASC Integration" class="border-gray-700 bg-gray-800">
+						<div class="space-y-4">
+							<div class="text-sm font-medium text-green-400">
+								🤖 Autonomous Supply Chain Features
+							</div>
+
+							<div class="rounded-lg bg-gray-700/50 p-3">
+								<label class="flex cursor-pointer items-center space-x-3">
 									<input
-										type="checkbox"
 										bind:checked={productForm.enableQualityMonitoring}
-										class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
+										type="checkbox"
+										class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-green-500 focus:ring-green-500"
 									/>
-									<span class="text-gray-300">Enable Autonomous Quality Monitoring</span>
+									<div>
+										<span class="text-sm font-medium text-white"
+											>Enable Autonomous Quality Monitoring</span
+										>
+										<p class="mt-1 text-xs text-gray-400">
+											Monitor temperature, humidity, and other conditions automatically using IoT
+											sensors
+										</p>
+									</div>
 								</label>
 								{#if productForm.enableQualityMonitoring}
-									<div class="grid grid-cols-2 gap-4 mt-3 ml-7">
+									<div class="mt-4 space-y-3">
 										<div>
-											<label for="temp-threshold" class="block text-gray-400 text-sm mb-1">
-												Temperature Threshold (°C)
-											</label>
+											<label for="temperature-threshold" class="mb-1 block text-xs text-gray-300"
+												>Maximum Temperature (°C)</label
+											>
 											<input
-												id="temp-threshold"
-												type="number"
+												id="temperature-threshold"
 												bind:value={productForm.temperatureThreshold}
-												placeholder="25"
-												class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+												type="number"
+												step="0.1"
+												placeholder="25.0"
+												class="w-full rounded border border-gray-500 bg-gray-600 px-3 py-2 text-sm text-white focus:border-green-500"
 											/>
+											<p class="mt-1 text-xs text-gray-400">
+												Alert if temperature exceeds this value
+											</p>
 										</div>
 										<div>
-											<label for="humidity-threshold" class="block text-gray-400 text-sm mb-1">
-												Humidity Threshold (%)
-											</label>
+											<label for="humidity-threshold" class="mb-1 block text-xs text-gray-300"
+												>Maximum Humidity (%)</label
+											>
 											<input
 												id="humidity-threshold"
-												type="number"
 												bind:value={productForm.humidityThreshold}
-												placeholder="70"
-												class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+												type="number"
+												step="0.1"
+												placeholder="70.0"
+												class="w-full rounded border border-gray-500 bg-gray-600 px-3 py-2 text-sm text-white focus:border-green-500"
 											/>
+											<p class="mt-1 text-xs text-gray-400">
+												Alert if humidity exceeds this percentage
+											</p>
 										</div>
 									</div>
 								{/if}
 							</div>
 
-							<!-- Payment Automation -->
-							<div class="mb-4">
-								<label class="flex items-center gap-3">
+							<div class="rounded-lg bg-gray-700/50 p-3">
+								<label class="flex items-center space-x-3">
 									<input
-										type="checkbox"
 										bind:checked={productForm.enablePaymentAutomation}
-										class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
+										type="checkbox"
+										class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-green-500 focus:ring-green-500"
 									/>
-									<span class="text-gray-300">Enable Automated Conditional Payments</span>
+									<span class="text-sm text-white">Enable Payment Automation</span>
 								</label>
 								{#if productForm.enablePaymentAutomation}
-									<div class="mt-3 ml-7">
-										<label for="payment-conditions" class="block text-gray-400 text-sm mb-1">
-											Payment Trigger Condition
-										</label>
+									<div class="mt-3">
 										<select
-											id="payment-conditions"
 											bind:value={productForm.paymentConditions}
-											class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+											class="w-full rounded border border-gray-500 bg-gray-600 px-2 py-1 text-sm text-white"
 										>
-											<option value="delivery_confirmation">Delivery Confirmation</option>
-											<option value="quality_verification">Quality Verification</option>
-											<option value="milestone_completion">Milestone Completion</option>
-											<option value="time_based">Time-based Release</option>
+											<option value="delivery_confirmation">On Delivery Confirmation</option>
+											<option value="quality_approval">On Quality Approval</option>
+											<option value="milestone_based">Milestone Based</option>
 										</select>
 									</div>
 								{/if}
 							</div>
 
-							<!-- Insurance -->
-							<div class="mb-4">
-								<label class="flex items-center gap-3">
+							<div class="rounded-lg bg-gray-700/50 p-3">
+								<label class="flex items-center space-x-3">
 									<input
-										type="checkbox"
 										bind:checked={productForm.enableInsurance}
-										class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
+										type="checkbox"
+										class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-green-500 focus:ring-green-500"
 									/>
-									<span class="text-gray-300">Enable Smart Insurance</span>
+									<span class="text-sm text-white">Enable Smart Insurance</span>
 								</label>
 								{#if productForm.enableInsurance}
-									<div class="mt-3 ml-7">
-										<label for="insurance-value" class="block text-gray-400 text-sm mb-1">
-											Insurance Coverage Value (MAS)
-										</label>
+									<div class="mt-3">
 										<input
-											id="insurance-value"
-											type="number"
-											step="0.01"
 											bind:value={productForm.insuranceValue}
-											placeholder="100.00"
-											class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+											type="text"
+											placeholder="Insurance value (MAS)"
+											class="w-full rounded border border-gray-500 bg-gray-600 px-2 py-1 text-sm text-white"
 										/>
 									</div>
 								{/if}
 							</div>
-						</div>
 
-						<Button 
-							disabled={loading || !productForm.name || !productForm.batch}
-							class="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
-						>
-							{loading ? 'Minting...' : 'Mint Product NFT'}
-						</Button>
-					</form>
-				</Card>
-
-				<!-- Product Management -->
-				<Card title="📊 Product Management" class="bg-gray-800 border-gray-700">
-					<div class="space-y-6">
-						<!-- Quality Monitoring Update -->
-						<div>
-							<h3 class="text-white font-medium mb-3">🌡️ Update Quality Data</h3>
-							<div class="grid grid-cols-2 gap-4">
-								<div>
-									<label class="block text-sm font-medium text-gray-300 mb-2">Product ID</label>
-									<input
-										bind:value={qualityForm.productId}
-										placeholder="PVC-2025-001"
-										class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-									/>
-								</div>
-								<div>
-									<label class="block text-sm font-medium text-gray-300 mb-2">Temperature (°C)</label>
-									<input
-										bind:value={qualityForm.temperature}
-										type="number"
-										placeholder="25"
-										class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-									/>
-								</div>
-								<div>
-									<label class="block text-sm font-medium text-gray-300 mb-2">Humidity (%)</label>
-									<input
-										bind:value={qualityForm.humidity}
-										type="number"
-										placeholder="60"
-										class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-									/>
-								</div>
-								<div class="flex items-end">
-									<Button 
-										onclick={updateQuality}
-										disabled={!qualityForm.productId || !qualityForm.temperature || !qualityForm.humidity}
-										class="w-full bg-orange-600 hover:bg-orange-700"
-									>
-										Update Quality
-									</Button>
-								</div>
+							<div class="mt-8 rounded-lg bg-gray-700/50 p-4">
+								<h3 class="mb-2 font-medium text-white">🤖 ASC Features</h3>
+								<ul class="space-y-1 text-sm text-gray-400">
+									<li>• Autonomous quality monitoring with IoT sensors</li>
+									<li>• Conditional payment automation via escrow</li>
+									<li>• Smart insurance with automated claims</li>
+									<li>• Immutable product provenance on Massa blockchain</li>
+									<li>• IPFS metadata storage via Pinata</li>
+								</ul>
 							</div>
 						</div>
-
-						<!-- Location Tracking Update -->
-						<div class="border-t border-gray-600 pt-6">
-							<h3 class="text-white font-medium mb-3">📍 Update Location</h3>
-							<div class="grid grid-cols-2 gap-4">
-								<div>
-									<label class="block text-sm font-medium text-gray-300 mb-2">Product ID</label>
-									<input
-										bind:value={locationForm.productId}
-										placeholder="PVC-2025-001"
-										class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-									/>
-								</div>
-								<div>
-									<label class="block text-sm font-medium text-gray-300 mb-2">Location Name</label>
-									<input
-										bind:value={locationForm.location}
-										placeholder="New York Warehouse"
-										class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-									/>
-								</div>
-								<div>
-									<label class="block text-sm font-medium text-gray-300 mb-2">Latitude</label>
-									<input
-										bind:value={locationForm.latitude}
-										type="number"
-										step="0.000001"
-										placeholder="40.7128"
-										class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-									/>
-								</div>
-								<div>
-									<label class="block text-sm font-medium text-gray-300 mb-2">Longitude</label>
-									<input
-										bind:value={locationForm.longitude}
-										type="number"
-										step="0.000001"
-										placeholder="-74.0060"
-										class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-									/>
-								</div>
-							</div>
-							<Button 
-								onclick={updateProductLocation}
-								disabled={!locationForm.productId || !locationForm.location}
-								class="w-full mt-4 bg-purple-600 hover:bg-purple-700"
-							>
-								Update Location
-							</Button>
-						</div>
-
-						<!-- Create Shipment -->
-						<div class="border-t border-gray-600 pt-6">
-							<h3 class="text-white font-medium mb-3">🚚 Create Shipment</h3>
-							<div class="grid grid-cols-2 gap-4">
-								<div>
-									<label class="block text-sm font-medium text-gray-300 mb-2">Product ID</label>
-									<input
-										bind:value={shipmentForm.productId}
-										placeholder="PVC-2025-001"
-										class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-									/>
-								</div>
-								<div>
-									<label class="block text-sm font-medium text-gray-300 mb-2">Origin</label>
-									<input
-										bind:value={shipmentForm.origin}
-										placeholder="Manufacturing Plant"
-										class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-									/>
-								</div>
-								<div>
-									<label class="block text-sm font-medium text-gray-300 mb-2">Destination</label>
-									<input
-										bind:value={shipmentForm.destination}
-										placeholder="Distribution Center"
-										class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-									/>
-								</div>
-								<div>
-									<label class="block text-sm font-medium text-gray-300 mb-2">Carrier</label>
-									<input
-										bind:value={shipmentForm.carrier}
-										placeholder="FedEx"
-										class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-									/>
-								</div>
-							</div>
-							<Button 
-								onclick={createProductShipment}
-								disabled={!shipmentForm.productId || !shipmentForm.origin || !shipmentForm.destination || !shipmentForm.carrier}
-								class="w-full mt-4 bg-green-600 hover:bg-green-700"
-							>
-								Create Shipment
-							</Button>
-						</div>
-					</div>
-				</Card>
-
-				<!-- Quick Actions & Info -->
-				<Card title="⚡ Quick Actions" class="bg-gray-800 border-gray-700">
-					<div class="space-y-4">
-						<Button 
-							variant="outline" 
-							class="w-full justify-start border-gray-600 text-gray-300 hover:bg-gray-700"
-							onclick={() => goto('/manufacturer/products')}
-						>
-							📦 View My Products
-						</Button>
-						
-						<Button 
-							variant="outline" 
-							class="w-full justify-start border-gray-600 text-gray-300 hover:bg-gray-700"
-							onclick={() => goto('/scan')}
-						>
-							� QR Code Generator
-						</Button>
-						
-						<Button 
-							variant="outline" 
-							class="w-full justify-start border-gray-600 text-gray-300 hover:bg-gray-700"
-							onclick={() => goto('/marketplace')}
-						>
-							🏪 View Marketplace
-						</Button>
-					</div>
-
-					<div class="mt-8 p-4 bg-gray-700/50 rounded-lg">
-						<h3 class="text-white font-medium mb-2">🤖 ASC Features</h3>
-						<ul class="text-gray-400 text-sm space-y-1">
-							<li>• Autonomous quality monitoring with IoT sensors</li>
-							<li>• Conditional payment automation via escrow</li>
-							<li>• Smart insurance with automated claims</li>
-							<li>• Immutable product provenance on Massa blockchain</li>
-							<li>• IPFS metadata storage via Pinata</li>
-						</ul>
-					</div>
-				</Card>
-			</div>
-		{/if}
-	</div>
-</PageLayout>
+					</Card>
+				</div>
+			{/if}
+		</div>
+	</PageLayout>
+</RouteGuard>

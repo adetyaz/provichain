@@ -2,38 +2,8 @@
 	import PageLayout from '$lib/components/PageLayout.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Card from '$lib/components/Card.svelte';
-	import { checkUserRole, getUserAddress } from '$lib/web3';
+	import RouteGuard from '$lib/components/RouteGuard.svelte';
 	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
-
-	// Auth state
-	let isManufacturer = $state(false);
-	let userAddress = $state('');
-	let loading = $state(true);
-
-	// Redirect if not authenticated or wrong role
-	onMount(async () => {
-		try {
-			loading = true;
-			userAddress = await getUserAddress();
-			isManufacturer = await checkUserRole('MANUFACTURER');
-			
-			if (!userAddress) {
-				goto('/connect');
-				return;
-			}
-			
-			if (!isManufacturer) {
-				goto('/manufacturer'); // Redirect to main page to request role
-				return;
-			}
-		} catch (err) {
-			console.error('Auth error:', err);
-			goto('/connect');
-		} finally {
-			loading = false;
-		}
-	});
 
 	// Form state
 	let currentStep = $state(1);
@@ -120,11 +90,12 @@
 	};
 </script>
 
-<PageLayout 
-	title="Product Launchpad" 
-	subtitle="Tokenize new products and configure autonomous smart contracts"
-	maxWidth="2xl"
->
+<RouteGuard requiredRole="manufacturer">
+	<PageLayout 
+		title="Product Launchpad" 
+		subtitle="Tokenize new products and configure autonomous smart contracts"
+		maxWidth="2xl"
+	>
 	<!-- Progress Bar -->
 	<div class="mb-8">
 		<div class="flex items-center justify-between mb-4">
@@ -133,7 +104,7 @@
 					<div class="w-8 h-8 rounded-full flex items-center justify-center {
 						currentStep > i + 1 ? 'bg-green-500 text-black' :
 						currentStep === i + 1 ? 'bg-green-500 text-black' :
-						'bg-gray-700 text-gray-400'
+						'bg-gray-700 text-gray-200'
 					}">
 						{currentStep > i + 1 ? '✓' : i + 1}
 					</div>
@@ -145,7 +116,7 @@
 				</div>
 			{/each}
 		</div>
-		<div class="flex justify-between text-sm text-gray-400">
+		<div class="flex justify-between text-sm text-white">
 			<span class="{currentStep === 1 ? 'text-green-400' : ''}">Product Details</span>
 			<span class="{currentStep === 2 ? 'text-green-400' : ''}">ASC Configuration</span>
 			<span class="{currentStep === 3 ? 'text-green-400' : ''}">Legal & Compliance</span>
@@ -160,8 +131,9 @@
 			<div class="space-y-6">
 				<div class="grid md:grid-cols-2 gap-6">
 					<div>
-						<label class="block text-sm font-medium text-gray-300 mb-2">Product Name *</label>
+						<label for="product-name-launchpad" class="block text-sm font-medium text-white mb-2">Product Name *</label>
 						<input
+							id="product-name-launchpad"
 							bind:value={productName}
 							placeholder="e.g., Premium Organic Coffee Batch"
 							class="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:border-green-500 focus:outline-none"
@@ -170,8 +142,9 @@
 					</div>
 					
 					<div>
-						<label class="block text-sm font-medium text-gray-300 mb-2">Category *</label>
+						<label for="category-launchpad" class="block text-sm font-medium text-white mb-2">Category *</label>
 						<select
+							id="category-launchpad"
 							bind:value={category}
 							class="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white focus:border-green-500 focus:outline-none"
 							required
@@ -185,8 +158,9 @@
 				</div>
 
 				<div>
-					<label class="block text-sm font-medium text-gray-300 mb-2">Description</label>
+					<label for="description-launchpad" class="block text-sm font-medium text-white mb-2">Description</label>
 					<textarea
+						id="description-launchpad"
 						bind:value={productDescription}
 						placeholder="Describe your product, its origin, materials, or special features..."
 						rows="4"
@@ -196,9 +170,10 @@
 
 				<div class="grid md:grid-cols-3 gap-6">
 					<div>
-						<label class="block text-sm font-medium text-gray-300 mb-2">Batch ID</label>
+						<label for="batch-id-launchpad" class="block text-sm font-medium text-white mb-2">Batch ID</label>
 						<div class="flex gap-2">
 							<input
+								id="batch-id-launchpad"
 								bind:value={batchId}
 								placeholder="Auto-generated if empty"
 								class="flex-1 px-4 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:border-green-500 focus:outline-none"
@@ -210,8 +185,9 @@
 					</div>
 					
 					<div>
-						<label class="block text-sm font-medium text-gray-300 mb-2">Quantity</label>
+						<label for="quantity-launchpad" class="block text-sm font-medium text-white mb-2">Quantity</label>
 						<input
+							id="quantity-launchpad"
 							bind:value={quantity}
 							type="number"
 							placeholder="e.g., 1000"
@@ -220,8 +196,9 @@
 					</div>
 					
 					<div>
-						<label class="block text-sm font-medium text-gray-300 mb-2">Unit Price (USD)</label>
+						<label for="unit-price-launchpad" class="block text-sm font-medium text-white mb-2">Unit Price (USD)</label>
 						<input
+							id="unit-price-launchpad"
 							bind:value={unitPrice}
 							type="number"
 							step="0.01"
@@ -233,8 +210,9 @@
 
 				<div class="grid md:grid-cols-2 gap-6">
 					<div>
-						<label class="block text-sm font-medium text-gray-300 mb-2">Product Images</label>
+						<label for="product-images" class="block text-sm font-medium text-white mb-2">Product Images</label>
 						<input
+							id="product-images"
 							bind:files={productImages}
 							type="file"
 							multiple
@@ -244,8 +222,9 @@
 					</div>
 					
 					<div>
-						<label class="block text-sm font-medium text-gray-300 mb-2">Certifications</label>
+						<label for="certifications" class="block text-sm font-medium text-white mb-2">Certifications</label>
 						<input
+							id="certifications"
 							bind:files={certificationFiles}
 							type="file"
 							multiple
@@ -266,7 +245,7 @@
 					<div class="flex items-center justify-between mb-4">
 						<div>
 							<h3 class="text-lg font-semibold text-white">Quality Monitoring</h3>
-							<p class="text-gray-400 text-sm">Automatically monitor product conditions</p>
+							<p class="text-gray-200 text-sm">Automatically monitor product conditions</p>
 						</div>
 						<label class="relative inline-flex items-center cursor-pointer">
 							<input bind:checked={enableQualityMonitoring} type="checkbox" class="sr-only peer" />
@@ -277,16 +256,18 @@
 					{#if enableQualityMonitoring}
 						<div class="grid md:grid-cols-2 gap-4">
 							<div>
-								<label class="block text-sm font-medium text-gray-300 mb-2">Temperature Threshold (°C)</label>
+								<label for="temperature-threshold" class="block text-sm font-medium text-white mb-2">Temperature Threshold (°C)</label>
 								<input
+									id="temperature-threshold"
 									bind:value={temperatureThreshold}
 									type="number"
 									class="w-full px-4 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white focus:border-green-500 focus:outline-none"
 								/>
 							</div>
 							<div>
-								<label class="block text-sm font-medium text-gray-300 mb-2">Humidity Threshold (%)</label>
+								<label for="humidity-threshold" class="block text-sm font-medium text-white mb-2">Humidity Threshold (%)</label>
 								<input
+									id="humidity-threshold"
 									bind:value={humidityThreshold}
 									type="number"
 									class="w-full px-4 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white focus:border-green-500 focus:outline-none"
@@ -301,7 +282,7 @@
 					<div class="flex items-center justify-between mb-4">
 						<div>
 							<h3 class="text-lg font-semibold text-white">Payment Automation</h3>
-							<p class="text-gray-400 text-sm">Automatically release payments when conditions are met</p>
+							<p class="text-gray-200 text-sm">Automatically release payments when conditions are met</p>
 						</div>
 						<label class="relative inline-flex items-center cursor-pointer">
 							<input bind:checked={enablePaymentAutomation} type="checkbox" class="sr-only peer" />
@@ -311,8 +292,9 @@
 					
 					{#if enablePaymentAutomation}
 						<div>
-							<label class="block text-sm font-medium text-gray-300 mb-2">Payment Conditions</label>
+							<label for="payment-conditions" class="block text-sm font-medium text-white mb-2">Payment Conditions</label>
 							<select
+								id="payment-conditions"
 								bind:value={paymentConditions}
 								class="w-full px-4 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white focus:border-green-500 focus:outline-none"
 							>
@@ -329,7 +311,7 @@
 					<div class="flex items-center justify-between mb-4">
 						<div>
 							<h3 class="text-lg font-semibold text-white">Insurance Integration</h3>
-							<p class="text-gray-400 text-sm">Automatically trigger insurance claims for quality breaches</p>
+							<p class="text-gray-200 text-sm">Automatically trigger insurance claims for quality breaches</p>
 						</div>
 						<label class="relative inline-flex items-center cursor-pointer">
 							<input bind:checked={enableInsurance} type="checkbox" class="sr-only peer" />
@@ -339,8 +321,9 @@
 					
 					{#if enableInsurance}
 						<div>
-							<label class="block text-sm font-medium text-gray-300 mb-2">Insurance Value (USD)</label>
+							<label for="insurance-value" class="block text-sm font-medium text-white mb-2">Insurance Value (USD)</label>
 							<input
+								id="insurance-value"
 								bind:value={insuranceValue}
 								type="number"
 								step="0.01"
@@ -359,8 +342,9 @@
 			<div class="space-y-6">
 				<div class="grid md:grid-cols-2 gap-6">
 					<div>
-						<label class="block text-sm font-medium text-gray-300 mb-2">Legal Entity *</label>
+						<label for="legal-entity" class="block text-sm font-medium text-white mb-2">Legal Entity *</label>
 						<input
+							id="legal-entity"
 							bind:value={legalEntity}
 							placeholder="Your company or legal entity name"
 							class="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:border-green-500 focus:outline-none"
@@ -369,8 +353,9 @@
 					</div>
 					
 					<div>
-						<label class="block text-sm font-medium text-gray-300 mb-2">Compliance Region *</label>
+						<label for="compliance-region" class="block text-sm font-medium text-white mb-2">Compliance Region *</label>
 						<select
+							id="compliance-region"
 							bind:value={complianceRegion}
 							class="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white focus:border-green-500 focus:outline-none"
 							required
@@ -392,7 +377,7 @@
 							<p class="text-white">
 								I confirm that I have legal ownership and authority to tokenize these assets
 							</p>
-							<p class="text-gray-400 mt-1">
+							<p class="text-gray-200 mt-1">
 								By checking this, you attest that you are the rightful owner or authorized representative of the products being tokenized.
 							</p>
 						</div>
@@ -404,7 +389,7 @@
 							<p class="text-white">
 								I understand and agree to comply with all applicable regulations
 							</p>
-							<p class="text-gray-400 mt-1">
+							<p class="text-gray-200 mt-1">
 								This includes but is not limited to securities laws, consumer protection regulations, and international trade requirements in your jurisdiction.
 							</p>
 						</div>
@@ -435,19 +420,19 @@
 					<h3 class="text-lg font-semibold text-white mb-4">Product Summary</h3>
 					<div class="grid md:grid-cols-2 gap-4 text-sm">
 						<div>
-							<p class="text-gray-400">Name</p>
+							<p class="text-gray-200">Name</p>
 							<p class="text-white">{productName || 'Not specified'}</p>
 						</div>
 						<div>
-							<p class="text-gray-400">Category</p>
+							<p class="text-gray-200">Category</p>
 							<p class="text-white">{category || 'Not specified'}</p>
 						</div>
 						<div>
-							<p class="text-gray-400">Batch ID</p>
+							<p class="text-gray-200">Batch ID</p>
 							<p class="text-white font-mono">{batchId || 'Will be auto-generated'}</p>
 						</div>
 						<div>
-							<p class="text-gray-400">Quantity</p>
+							<p class="text-gray-200">Quantity</p>
 							<p class="text-white">{quantity || 'Not specified'}</p>
 						</div>
 					</div>
@@ -458,7 +443,7 @@
 					<h3 class="text-lg font-semibold text-white mb-4">Autonomous Features</h3>
 					<div class="space-y-2 text-sm">
 						<div class="flex items-center justify-between">
-							<span class="text-gray-300">Quality Monitoring</span>
+							<span class="text-gray-200">Quality Monitoring</span>
 							<span class="{enableQualityMonitoring ? 'text-green-400' : 'text-gray-500'}">
 								{enableQualityMonitoring ? '✓ Enabled' : '✗ Disabled'}
 							</span>
@@ -539,17 +524,13 @@
 		
 		<div class="flex gap-3">
 			{#if currentStep < 4}
-				<Button onclick={nextStep} disabled={
-					(currentStep === 1 && (!productName || !category)) ||
-					(currentStep === 3 && (!legalEntity || !complianceRegion || !agreedToTerms || !agreedToCompliance))
-				}>
+				<Button onclick={nextStep}>
 					Next
 				</Button>
 			{:else}
 				<Button 
 					onclick={handleSubmit} 
 					loading={isSubmitting}
-					disabled={isSubmitting}
 					size="lg"
 				>
 					{isSubmitting ? 'Minting NFT...' : 'Launch Product'}
@@ -558,3 +539,4 @@
 		</div>
 	</div>
 </PageLayout>
+</RouteGuard>

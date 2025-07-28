@@ -217,7 +217,7 @@ We're strategic about where we store data:
 #### Developer Workflow & Tooling (Svelte-centric)
 
 1. **Local Dev Environment Setup:**
-   - **Massa Node:** Run a local Massa DevNet: `git clone https://github.com/massalabs/massa.git && cd massa && cargo build --release --features sandbox && cargo run --features sandbox`.
+   - **Massa Node:** Run a local Massa BuildNet: `git clone https://github.com/massalabs/massa.git && cd massa && cargo build --release --features sandbox && cargo run --features sandbox`.
    - **Massa Client:** `cd massa-client && cargo run` for CLI interactions (e.g., generating keys, deploying initial contracts if not using SDK scripts).
    - **Massa AS-SDK:** `npm install -g @massalabs/massa-as-sdk` for smart contract compilation.
    - **Massa Web3 SDK:** `npm install @massalabs/massa-web3 @massalabs/wallet-provider` in your Svelte project.

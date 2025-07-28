@@ -18,8 +18,8 @@ export async function getAccountProvider() {
   const account = await Account.fromEnv().catch((error) => {
     console.log('Error getting account:', error);
     console.log('This is expected when deploying from the CI pipeline');
-    console.log('Using PRIVATE_KEY from environment variables');
-    return Account.fromEnv('PRIVATE_KEY');
+    console.log('Using WALLET_PRIVATE_KEY from environment variables');
+    return Account.fromEnv('WALLET_PRIVATE_KEY');
   });
 
   let provider: Web3Provider;
@@ -30,13 +30,4 @@ export async function getAccountProvider() {
     provider = Web3Provider.buildnet(account);
   }
   return provider;
-}
-
-export async function getContractAddress(contractName: string) {
-  const addressKey = `${contractName.toUpperCase()}_ADDRESS`;
-  const contractAddress = process.env[addressKey];
-  if (!contractAddress) {
-    throw new Error(`${addressKey} is not set in .env file`);
-  }
-  return contractAddress;
 }

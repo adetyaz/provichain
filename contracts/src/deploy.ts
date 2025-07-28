@@ -2,43 +2,34 @@
 import { Args, Mas } from '@massalabs/massa-web3';
 import { getScByteCode, getAccountProvider } from './utils';
 
-async function deployDIDRegistry() {
+async function deployProductRegistry() {
   const provider = await getAccountProvider();
 
-  console.log('Deploying DIDRegistryASC contract...');
+  console.log('🚀 Deploying ProductRegistryASC contract...');
   console.log('Provider address:', provider.address);
-  
+
   const balance = await provider.balance();
   console.log('Provider balance:', balance.toString());
 
-  // Note: Ensure you have sufficient MAS for deployment
+  // Get the bytecode
+  const byteCode = getScByteCode('build', 'ProductRegistryASC.wasm');
 
-  const byteCode = getScByteCode('build', 'DIDRegistryASC.wasm');
-
-  // No constructor arguments needed for DIDRegistry
-  const constructorArgs = new Args();
+  // ProductRegistry constructor requires AccessControl address
+  const accessControlAddress =
+    'AS12JiKF6YLc2eQCYdvZuybvXoHM38obVqCPRRcF1awznuafPNCBN';
+  const constructorArgs = new Args().addString(accessControlAddress);
 
   const contract = await provider.deploySC({
-    coins: Mas.fromString('0.1'), // Small amount for deployment
+    coins: Mas.fromString('0.1'),
     byteCode,
     parameter: constructorArgs.serialize(),
   });
 
-  console.log('DIDRegistryASC deployed at:', contract.address);
-  console.log(
-    `Add this to your .env file:\nDID_REGISTRY_ADDRESS="${contract.address}"\n`,
-  );
-
-  // Get deployment events
-  const events = await provider.getEvents({
-    smartContractAddress: contract.address,
-  });
-
-  for (const event of events) {
-    console.log('Deployment event:', event.data);
-  }
+  console.log('✅ ProductRegistryASC deployed at:', contract.address);
+  console.log('\n🔧 UPDATE your web3.ts file with this address:');
+  console.log(`PRODUCT_REGISTRY: '${contract.address}',`);
 
   return contract.address;
 }
 
-await deployDIDRegistry().catch(console.error);
+deployProductRegistry().catch(console.error);

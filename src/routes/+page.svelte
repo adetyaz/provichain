@@ -3,6 +3,12 @@
 	import Card from '$lib/components/Card.svelte';
 	import WalletConnect from '$lib/components/WalletConnect.svelte';
 	import { user, isConnected } from '$lib/stores/auth';
+	import { onMount } from 'svelte';
+	import { getSystemStats } from '$lib/services/system-service';
+	import type { SystemStats } from '$lib/services/system-service';
+
+	let stats = $state<SystemStats | null>(null);
+	let statsLoading = $state(true);
 
 	const features = [
 		{
@@ -27,12 +33,15 @@
 		}
 	];
 
-	const stats = [
-		{ label: 'Products Tracked', value: '12,847', change: '+23%' },
-		{ label: 'Supply Chains', value: '156', change: '+12%' },
-		{ label: 'Automated Payments', value: '$2.4M', change: '+45%' },
-		{ label: 'Quality Alerts', value: '1,234', change: '-8%' }
-	];
+	onMount(async () => {
+		try {
+			stats = await getSystemStats();
+		} catch (error) {
+			console.error('Failed to load system stats:', error);
+		} finally {
+			statsLoading = false;
+		}
+	});
 </script>
 
 <div class="bg-black min-h-screen">
@@ -72,20 +81,57 @@
 				</Button>
 			</div>
 
-			<!-- Stats -->
-			<div class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-20">
-				{#each stats as stat}
+			<!-- Real-time Stats -->
+			{#if statsLoading}
+				<div class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-20">
+					{#each Array(4) as _}
+						<div class="text-center animate-pulse">
+							<div class="h-8 bg-gray-700 rounded mb-2"></div>
+							<div class="h-4 bg-gray-800 rounded mb-1"></div>
+							<div class="h-3 bg-gray-800 rounded w-16 mx-auto"></div>
+						</div>
+					{/each}
+				</div>
+			{:else if stats}
+				<div class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-20">
 					<div class="text-center">
 						<div class="text-3xl md:text-4xl font-bold text-white mb-2">
-							{stat.value}
+							{stats.totalProducts.toLocaleString()}
 						</div>
-						<div class="text-gray-400 text-sm mb-1">{stat.label}</div>
-						<div class="text-xs {stat.change.startsWith('+') ? 'text-green-400' : 'text-red-400'}">
-							{stat.change} this month
+						<div class="text-gray-400 text-sm mb-1">Products Tracked</div>
+						<div class="text-xs text-green-400">
+							+{stats.newProducts} this month
 						</div>
 					</div>
-				{/each}
-			</div>
+					<div class="text-center">
+						<div class="text-3xl md:text-4xl font-bold text-white mb-2">
+							{stats.manufacturers}
+						</div>
+						<div class="text-gray-400 text-sm mb-1">Manufacturers</div>
+						<div class="text-xs text-green-400">
+							Active suppliers
+						</div>
+					</div>
+					<div class="text-center">
+						<div class="text-3xl md:text-4xl font-bold text-white mb-2">
+							{stats.consumers.toLocaleString()}
+						</div>
+						<div class="text-gray-400 text-sm mb-1">Consumers</div>
+						<div class="text-xs text-blue-400">
+							Verified buyers
+						</div>
+					</div>
+					<div class="text-center">
+						<div class="text-3xl md:text-4xl font-bold text-white mb-2">
+							{stats.todayVerifications}
+						</div>
+						<div class="text-gray-400 text-sm mb-1">Daily Verifications</div>
+						<div class="text-xs text-green-400">
+							Products verified today
+						</div>
+					</div>
+				</div>
+			{/if}
 		</div>
 	</section>
 
