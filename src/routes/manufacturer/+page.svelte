@@ -6,9 +6,9 @@
 	import { mintProduct, getManufacturerProducts, getUserAddress } from '$lib';
 	import { uploadImageToPinata } from '$lib/ipfs/pinata-client';
 	import { getPendingRequests } from '$lib/services/marketplace-service';
-	import { debugRequestStatus, debugAllRequestsForManufacturer } from '$lib/debug-blockchain';
-	import { debugApprovalWorkflow, debugContractState } from '$lib/debug-approval';
-	import { testSmartContractDirectly, debugRequestStorage } from '$lib/debug-contract';
+	// import { debugRequestStatus, debugAllRequestsForManufacturer } from '$lib/debug-blockchain';
+	// import { debugApprovalWorkflow, debugContractState } from '$lib/debug-approval';
+	// import { testSmartContractDirectly, debugRequestStorage } from '$lib/debug-contract';
 	import {
 		waitForOperationConfirmation,
 		checkMassaNetworkStatus,
@@ -263,142 +263,142 @@
 	}
 
 	// Debug blockchain state
-	async function handleDebugBlockchain() {
-		try {
-			console.log('🔍 DEBUG: Checking blockchain state...');
-			const result = await debugAllRequestsForManufacturer(userAddress);
-			console.log('🔍 DEBUG RESULT:', result);
+	// async function handleDebugBlockchain() {
+	// 	try {
+	// 		console.log('🔍 DEBUG: Checking blockchain state...');
+	// 		const result = await debugAllRequestsForManufacturer(userAddress);
+	// 		console.log('🔍 DEBUG RESULT:', result);
 
-			// Also debug the first pending request if any
-			if (pendingRequests.length > 0) {
-				const firstRequest = pendingRequests[0];
-				console.log('🔍 Debugging first request:', firstRequest.id);
-				const requestDetails = await debugRequestStatus(firstRequest.id);
-				console.log('🔍 Request details from blockchain:', requestDetails);
-			}
-		} catch (error) {
-			console.error('❌ Debug failed:', error);
-		}
-	}
+	// 		// Also debug the first pending request if any
+	// 		if (pendingRequests.length > 0) {
+	// 			const firstRequest = pendingRequests[0];
+	// 			console.log('🔍 Debugging first request:', firstRequest.id);
+	// 			const requestDetails = await debugRequestStatus(firstRequest.id);
+	// 			console.log('🔍 Request details from blockchain:', requestDetails);
+	// 		}
+	// 	} catch (error) {
+	// 		console.error('❌ Debug failed:', error);
+	// 	}
+	// }
 
 	// Test approval workflow on first pending request
-	async function handleTestApproval() {
-		if (pendingRequests.length === 0) {
-			console.log('❌ No pending requests to test approval on');
-			return;
-		}
+	// async function handleTestApproval() {
+	// 	if (pendingRequests.length === 0) {
+	// 		console.log('❌ No pending requests to test approval on');
+	// 		return;
+	// 	}
 
-		const firstRequest = pendingRequests[0];
-		console.log('🧪 Testing approval workflow on request:', firstRequest.id);
+	// 	const firstRequest = pendingRequests[0];
+	// 	console.log('🧪 Testing approval workflow on request:', firstRequest.id);
 
-		try {
-			const result = await debugApprovalWorkflow(firstRequest.id);
-			console.log('🧪 Approval workflow result:', result);
+	// 	try {
+	// 		const result = await debugApprovalWorkflow(firstRequest.id);
+	// 		console.log('🧪 Approval workflow result:', result);
 
-			if (result.success) {
-				success = `Test approval successful! Operation: ${result.operationId}`;
-				// Refresh pending requests
-				await loadPendingRequests();
-			} else {
-				error = `Test approval failed: ${result.error}`;
-			}
-		} catch (testError) {
-			console.error('❌ Test approval failed:', testError);
-			error = 'Test approval failed: ' + testError;
-		}
-	}
+	// 		if (result.success) {
+	// 			success = `Test approval successful! Operation: ${result.operationId}`;
+	// 			// Refresh pending requests
+	// 			await loadPendingRequests();
+	// 		} else {
+	// 			error = `Test approval failed: ${result.error}`;
+	// 		}
+	// 	} catch (testError) {
+	// 		console.error('❌ Test approval failed:', testError);
+	// 		error = 'Test approval failed: ' + testError;
+	// 	}
+	// }
 
 	// Debug contract state
-	async function handleDebugContract() {
-		try {
-			console.log('🔍 DEBUG: Checking contract state...');
-			const result = await debugContractState();
-			console.log('🔍 CONTRACT DEBUG RESULT:', result);
-		} catch (error) {
-			console.error('❌ Contract debug failed:', error);
-		}
-	}
+	// async function handleDebugContract() {
+	// 	try {
+	// 		console.log('🔍 DEBUG: Checking contract state...');
+	// 		const result = await debugContractState();
+	// 		console.log('🔍 CONTRACT DEBUG RESULT:', result);
+	// 	} catch (error) {
+	// 		console.error('❌ Contract debug failed:', error);
+	// 	}
+	// }
 
-	// Test smart contract directly
-	async function handleTestContractDirect() {
-		if (pendingRequests.length === 0) {
-			console.log('❌ No pending requests to test');
-			return;
-		}
+	// // Test smart contract directly
+	// async function handleTestContractDirect() {
+	// 	if (pendingRequests.length === 0) {
+	// 		console.log('❌ No pending requests to test');
+	// 		return;
+	// 	}
 
-		const firstRequest = pendingRequests[0];
-		console.log('🔧 Testing smart contract directly on request:', firstRequest.id);
+	// 	const firstRequest = pendingRequests[0];
+	// 	console.log('🔧 Testing smart contract directly on request:', firstRequest.id);
 
-		try {
-			const result = await testSmartContractDirectly(firstRequest.id);
-			console.log('🔧 Direct contract test result:', result);
+	// 	try {
+	// 		const result = await testSmartContractDirectly(firstRequest.id);
+	// 		console.log('🔧 Direct contract test result:', result);
 
-			if (result.success) {
-				success = `Direct contract test successful! Operation: ${result.operationId}`;
-				await loadPendingRequests();
-			} else {
-				error = `Direct contract test failed: ${result.error}`;
-			}
-		} catch (testError) {
-			console.error('❌ Direct contract test failed:', testError);
-			error = 'Direct contract test failed: ' + testError;
-		}
-	}
+	// 		if (result.success) {
+	// 			success = `Direct contract test successful! Operation: ${result.operationId}`;
+	// 			await loadPendingRequests();
+	// 		} else {
+	// 			error = `Direct contract test failed: ${result.error}`;
+	// 		}
+	// 	} catch (testError) {
+	// 		console.error('❌ Direct contract test failed:', testError);
+	// 		error = 'Direct contract test failed: ' + testError;
+	// 	}
+	// }
 
-	// Debug request storage
-	async function handleDebugStorage() {
-		if (pendingRequests.length === 0) {
-			console.log('❌ No pending requests to debug storage');
-			return;
-		}
+	// // Debug request storage
+	// async function handleDebugStorage() {
+	// 	if (pendingRequests.length === 0) {
+	// 		console.log('❌ No pending requests to debug storage');
+	// 		return;
+	// 	}
 
-		const firstRequest = pendingRequests[0];
-		console.log('📖 Debugging storage for request:', firstRequest.id);
+	// 	const firstRequest = pendingRequests[0];
+	// 	console.log('📖 Debugging storage for request:', firstRequest.id);
 
-		try {
-			const result = await debugRequestStorage(firstRequest.id);
-			console.log('📖 Storage debug result:', result);
-		} catch (error) {
-			console.error('❌ Storage debug failed:', error);
-		}
-	}
+	// 	try {
+	// 		const result = await debugRequestStorage(firstRequest.id);
+	// 		console.log('📖 Storage debug result:', result);
+	// 	} catch (error) {
+	// 		console.error('❌ Storage debug failed:', error);
+	// 	}
+	// }
 
-	// Check network status
-	async function handleCheckNetwork() {
-		try {
-			console.log('🌐 Checking Massa network status...');
-			const result = await checkMassaNetworkStatus();
-			console.log('🌐 Network status result:', result);
-		} catch (error) {
-			console.error('❌ Network check failed:', error);
-		}
-	}
+	// // Check network status
+	// async function handleCheckNetwork() {
+	// 	try {
+	// 		console.log('🌐 Checking Massa network status...');
+	// 		const result = await checkMassaNetworkStatus();
+	// 		console.log('🌐 Network status result:', result);
+	// 	} catch (error) {
+	// 		console.error('❌ Network check failed:', error);
+	// 	}
+	// }
 
-	// Retry approval with higher fee
-	async function handleRetryWithHigherFee() {
-		if (pendingRequests.length === 0) {
-			console.log('❌ No pending requests to retry');
-			return;
-		}
+	// // Retry approval with higher fee
+	// async function handleRetryWithHigherFee() {
+	// 	if (pendingRequests.length === 0) {
+	// 		console.log('❌ No pending requests to retry');
+	// 		return;
+	// 	}
 
-		const firstRequest = pendingRequests[0];
-		console.log('🔄 Retrying approval with higher fee for request:', firstRequest.id);
+	// 	const firstRequest = pendingRequests[0];
+	// 	console.log('🔄 Retrying approval with higher fee for request:', firstRequest.id);
 
-		try {
-			const result = await retryApprovalWithBetterFee(firstRequest.id);
-			console.log('🔄 Retry result:', result);
+	// 	try {
+	// 		const result = await retryApprovalWithBetterFee(firstRequest.id);
+	// 		console.log('🔄 Retry result:', result);
 
-			if (result.success) {
-				success = `Retry successful! Check operation: ${result.operationId}`;
-				console.log('🔗 Massa Explorer:', result.explorerUrl);
-			} else {
-				error = `Retry failed: ${result.error}`;
-			}
-		} catch (retryError) {
-			console.error('❌ Retry failed:', retryError);
-			error = 'Retry failed: ' + retryError;
-		}
-	}
+	// 		if (result.success) {
+	// 			success = `Retry successful! Check operation: ${result.operationId}`;
+	// 			console.log('🔗 Massa Explorer:', result.explorerUrl);
+	// 		} else {
+	// 			error = `Retry failed: ${result.error}`;
+	// 		}
+	// 	} catch (retryError) {
+	// 		console.error('❌ Retry failed:', retryError);
+	// 		error = 'Retry failed: ' + retryError;
+	// 	}
+	// }
 
 	let dashboardStats = $derived([
 		{ label: 'Products', value: totalProducts.toString(), icon: '📦' },

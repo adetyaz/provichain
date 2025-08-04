@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { ownershipService, type TransferRequest } from '$lib/services/ownership-service';
-	import { getUserAddress } from '$lib/blockchain/provider';
+	import { getUserAddress } from '$lib/provider/provider';
 	import { createEventDispatcher } from 'svelte';
 	import type { Product } from '$lib/types';
 
