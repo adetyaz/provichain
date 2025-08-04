@@ -3,7 +3,7 @@
  * Handles cross-role workflows and supply chain orchestration
  */
 
-import { getUserAddress } from '../blockchain/provider';
+import { getUserAddress } from '../provider/provider';
 
 // Types for workflow management
 export interface ShipmentRequest {

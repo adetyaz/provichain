@@ -6,9 +6,7 @@
 
 	let { children } = $props();
 
-	// Auto-reconnect wallet on app load
 	onMount(() => {
-		console.log('🔍 Layout loaded - attempting auto-reconnect');
 		autoReconnectWallet();
 	});
 </script>

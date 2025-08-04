@@ -1,6 +1,6 @@
 // User service for role management and user operations
 import { Args, Mas } from '@massalabs/massa-web3';
-import { getWeb3Provider, getAccessControlContract } from '$lib/blockchain/provider';
+import { getWeb3Provider, getAccessControlContract } from '$lib/provider/provider';
 
 // Check if user has specific role
 export async function checkUserRole(roleName: string): Promise<boolean> {

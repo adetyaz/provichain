@@ -4,6 +4,7 @@
 	import Card from '$lib/components/Card.svelte';
 	import RouteGuard from '$lib/components/RouteGuard.svelte';
 	import { mintProduct, getManufacturerProducts, getUserAddress } from '$lib';
+	import { uploadImageToPinata } from '$lib/ipfs/pinata-client';
 	import { getPendingRequests } from '$lib/services/marketplace-service';
 	import { debugRequestStatus, debugAllRequestsForManufacturer } from '$lib/debug-blockchain';
 	import { debugApprovalWorkflow, debugContractState } from '$lib/debug-approval';
@@ -25,6 +26,12 @@
 	let totalProducts = $state(0);
 	let pendingRequests = $state<any[]>([]);
 
+	// Image upload states
+	let selectedImage = $state<File | null>(null);
+	let imagePreview = $state<string>('');
+	let uploadingImage = $state(false);
+	let imageUploadProgress = $state(0);
+
 	let productForm = $state({
 		id: '',
 		name: '',
@@ -32,6 +39,7 @@
 		quantity: 1,
 		description: '',
 		category: '',
+		image: '', // Will store IPFS hash
 		// Advanced Configuration
 		enableQualityMonitoring: true,
 		temperatureThreshold: '25',
@@ -90,6 +98,35 @@
 			error = '';
 			success = '';
 
+			let imageHash = '';
+
+			// Upload image if selected
+			if (selectedImage) {
+				uploadingImage = true;
+				imageUploadProgress = 0;
+
+				try {
+					imageHash = await uploadImageToPinata(
+						selectedImage,
+						(progress) => {
+							imageUploadProgress = progress;
+						},
+						productForm.id,
+						productForm.id // Use product ID as manufacturer identifier for now
+					);
+
+					console.log('✅ Image uploaded successfully:', imageHash);
+					success = 'Image uploaded successfully! Now minting product...';
+				} catch (imageError) {
+					console.error('❌ Image upload failed:', imageError);
+					error = `Image upload failed: ${imageError instanceof Error ? imageError.message : 'Unknown error'}`;
+					return;
+				} finally {
+					uploadingImage = false;
+					imageUploadProgress = 0;
+				}
+			}
+
 			const result = await mintProduct({
 				id: productForm.id,
 				name: productForm.name,
@@ -97,6 +134,7 @@
 				quantity: productForm.quantity,
 				description: productForm.description,
 				category: productForm.category,
+				image: imageHash,
 				ascConfig: {
 					enableQualityMonitoring: productForm.enableQualityMonitoring,
 					temperatureThreshold: productForm.temperatureThreshold,
@@ -123,6 +161,7 @@
 					quantity: 1,
 					description: '',
 					category: '',
+					image: '',
 					enableQualityMonitoring: true,
 					temperatureThreshold: '25',
 					humidityThreshold: '70',
@@ -131,6 +170,11 @@
 					enableInsurance: false,
 					insuranceValue: ''
 				};
+
+				// Clear image states
+				selectedImage = null;
+				imagePreview = '';
+				uploadingImage = false;
 			} else {
 				error = result.error || 'Failed to mint product';
 			}
@@ -149,6 +193,7 @@
 			quantity: 1,
 			description: '',
 			category: '',
+			image: '',
 			enableQualityMonitoring: true,
 			temperatureThreshold: '25',
 			humidityThreshold: '70',
@@ -157,8 +202,55 @@
 			enableInsurance: false,
 			insuranceValue: ''
 		};
+		// Clear image states
+		selectedImage = null;
+		imagePreview = '';
+		uploadingImage = false;
 		error = '';
 		success = '';
+	}
+
+	// Handle image selection and preview
+	function handleImageSelect(event: Event) {
+		const target = event.target as HTMLInputElement;
+		const file = target.files?.[0];
+
+		if (!file) return;
+
+		// Validate file type
+		if (!file.type.startsWith('image/')) {
+			error = 'Please select a valid image file (JPG, PNG, GIF)';
+			return;
+		}
+
+		// Validate file size (5MB limit)
+		if (file.size > 5 * 1024 * 1024) {
+			error = 'Image file must be less than 5MB';
+			return;
+		}
+
+		selectedImage = file;
+		error = '';
+
+		// Create preview
+		const reader = new FileReader();
+		reader.onload = (e) => {
+			imagePreview = e.target?.result as string;
+		};
+		reader.readAsDataURL(file);
+	}
+
+	// Clear selected image
+	function clearImage() {
+		selectedImage = null;
+		imagePreview = '';
+		productForm.image = '';
+
+		// Clear file input
+		const fileInput = document.getElementById('product-image') as HTMLInputElement;
+		if (fileInput) {
+			fileInput.value = '';
+		}
 	}
 
 	// Load pending product requests
@@ -536,6 +628,85 @@
 									class="w-full resize-none rounded-lg border border-gray-600 bg-gray-700 px-3 py-2
 										text-white transition-colors focus:border-green-500 focus:ring-1 focus:ring-green-500"
 								></textarea>
+							</div>
+
+							<!-- Product Image -->
+							<div>
+								<label for="product-image" class="mb-2 block text-sm font-medium text-green-400"
+									>Product Image</label
+								>
+								<div class="space-y-3">
+									<!-- File input -->
+									<input
+										id="product-image"
+										type="file"
+										accept="image/*"
+										onchange={handleImageSelect}
+										class="w-full rounded-lg border border-gray-600 bg-gray-700 px-3 py-2 text-white
+											file:mr-4 file:rounded-full file:border-0 file:bg-green-600 file:px-4 file:py-2
+											file:text-sm file:font-semibold file:text-white hover:file:bg-green-700"
+									/>
+
+									<!-- Image preview -->
+									{#if imagePreview}
+										<div class="relative">
+											<img
+												src={imagePreview}
+												alt="Product preview"
+												class="h-32 w-32 rounded-lg border border-gray-600 object-cover"
+											/>
+											<button
+												onclick={clearImage}
+												type="button"
+												class="absolute -top-2 -right-2 rounded-full bg-red-500 p-1 text-white hover:bg-red-600"
+												aria-label="Remove selected image"
+											>
+												<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														stroke-width="2"
+														d="M6 18L18 6M6 6l12 12"
+													/>
+												</svg>
+											</button>
+										</div>
+									{/if}
+
+									{#if uploadingImage}
+										<div class="space-y-2">
+											<div class="flex items-center space-x-2 text-sm text-gray-400">
+												<svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+													<circle
+														class="opacity-25"
+														cx="12"
+														cy="12"
+														r="10"
+														stroke="currentColor"
+														stroke-width="4"
+													/>
+													<path
+														class="opacity-75"
+														fill="currentColor"
+														d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+													/>
+												</svg>
+												<span>Uploading image... {imageUploadProgress}%</span>
+											</div>
+											{#if imageUploadProgress > 0}
+												<div class="h-2 w-full rounded-full bg-gray-700">
+													<div
+														class="h-2 rounded-full bg-blue-600 transition-all duration-300"
+														style="width: {imageUploadProgress}%"
+													></div>
+												</div>
+											{/if}
+										</div>
+									{/if}
+								</div>
+								<p class="mt-1 text-xs text-gray-400">
+									Optional: Upload a product image (JPG, PNG, GIF - Max 5MB)
+								</p>
 							</div>
 
 							<div class="flex space-x-4 pt-4">

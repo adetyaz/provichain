@@ -1,12 +1,13 @@
 // Product service for managing product operations
 import { Args, Mas } from '@massalabs/massa-web3';
-import { getWeb3Provider, getProductRegistryContract } from '$lib/blockchain/provider';
+import { getWeb3Provider, getProductRegistryContract } from '$lib/provider/provider';
 import {
 	uploadMetadataToPinata,
 	getMetadataFromPinata,
 	listProductsByManufacturer
 } from '$lib/ipfs/pinata-client';
 import { CONFIG } from '$lib/config/environment';
+import { ascService } from './asc-service';
 import type { Product, ProductMetadata } from '$lib/types';
 
 // Get product by ID - searches across all available products
@@ -16,6 +17,23 @@ export async function getProductById(
 ): Promise<Product | null> {
 	try {
 		console.log('🔍 Searching for product:', productId);
+
+		// First, check if this is a freshly minted product in localStorage
+		try {
+			const provider = await getWeb3Provider();
+			const storageKey = `minted-products-${provider.address}`;
+			const storedProducts = localStorage.getItem(storageKey);
+			if (storedProducts) {
+				const products = JSON.parse(storedProducts) as Product[];
+				const found = products.find((p) => p.id === productId);
+				if (found) {
+					console.log('✅ Product found in local storage (freshly minted)');
+					return found;
+				}
+			}
+		} catch (error) {
+			console.log('ℹ️ Could not check local storage for freshly minted products', error);
+		}
 
 		// If manufacturer address is provided, search their products first
 		if (manufacturerAddress) {
@@ -37,8 +55,11 @@ export async function getProductById(
 				console.log('✅ Product found in current user products');
 				return found;
 			}
-		} catch (err) {
-			console.log('ℹ️ Could not search current user products (user may not be manufacturer)');
+		} catch (error) {
+			console.log(
+				'ℹ️ Could not search current user products (user may not be manufacturer)',
+				error
+			);
 		}
 
 		// TODO: In the future, implement global product search across all manufacturers
@@ -209,6 +230,28 @@ export async function mintProduct(productData: {
 
 		await operation.waitSpeculativeExecution();
 		console.log('✅ Operation confirmed successfully!');
+
+		// Initialize ASC configuration if enabled
+		if (productData.ascConfig?.enableQualityMonitoring) {
+			console.log('🔧 Initializing ASC configuration for product:', productData.id);
+			try {
+				const ascConfig = {
+					enableQualityMonitoring: productData.ascConfig.enableQualityMonitoring,
+					temperatureThreshold: parseFloat(productData.ascConfig.temperatureThreshold),
+					humidityThreshold: parseFloat(productData.ascConfig.humidityThreshold)
+				};
+
+				const ascSuccess = await ascService.initializeASCForProduct(productData.id, ascConfig);
+				if (ascSuccess) {
+					console.log('✅ ASC configuration initialized successfully');
+				} else {
+					console.warn('⚠️ ASC configuration failed but product minting succeeded');
+				}
+			} catch (ascError) {
+				console.error('❌ ASC initialization failed:', ascError);
+				// Don't fail the entire mint process if ASC fails
+			}
+		}
 
 		// Store the minted product locally for immediate retrieval
 		await storeProductLocally(productData, provider.address, ipfsHash, operation.id);
@@ -397,6 +440,7 @@ async function storeProductLocally(
 		quantity: number;
 		category?: string;
 		description?: string;
+		image?: string; // Include image hash
 	},
 	manufacturerAddress: string,
 	ipfsHash: string,
@@ -413,7 +457,8 @@ async function storeProductLocally(
 			status: 'Active',
 			mintedAt: new Date().toISOString(),
 			manufacturer: manufacturerAddress,
-			ipfsHash: ipfsHash
+			ipfsHash: ipfsHash,
+			image: productData.image // Store the image hash
 		};
 
 		const storageKey = `minted-products-${manufacturerAddress}`;
@@ -547,4 +592,57 @@ export async function getProducts() {
 	// Import marketplace service to avoid circular dependency
 	const { getAvailableProducts } = await import('./marketplace-service');
 	return getAvailableProducts();
+}
+
+// ASC Configuration Testing Functions
+export async function getASCConfiguration(productId: string) {
+	try {
+		console.log('🔍 Retrieving ASC configuration for product:', productId);
+
+		// Get quality thresholds from smart contract
+		const thresholds = await ascService.getQualityThresholds(productId);
+		const isEnabled = await ascService.isQualityMonitoringEnabled(productId);
+		const alerts = await ascService.getQualityAlerts(productId);
+
+		return {
+			isEnabled,
+			thresholds,
+			alerts,
+			contractAddresses: ascService.getContractAddresses()
+		};
+	} catch (error) {
+		console.error('Failed to get ASC configuration:', error);
+		return null;
+	}
+}
+
+export async function testASCStorage(productId: string) {
+	try {
+		console.log('🧪 Testing ASC storage/retrieval for product:', productId);
+
+		// Test retrieving ASC configuration
+		const config = await getASCConfiguration(productId);
+
+		if (config) {
+			console.log('✅ ASC configuration retrieved:', config);
+			return {
+				success: true,
+				message: 'ASC configuration successfully retrieved from smart contracts',
+				data: config
+			};
+		} else {
+			return {
+				success: false,
+				message: 'Failed to retrieve ASC configuration from smart contracts',
+				data: null
+			};
+		}
+	} catch (error) {
+		console.error('ASC storage test failed:', error);
+		return {
+			success: false,
+			message: error instanceof Error ? error.message : 'Unknown error',
+			data: null
+		};
+	}
 }

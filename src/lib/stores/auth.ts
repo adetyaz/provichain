@@ -3,204 +3,65 @@ import { getWallets, WalletName } from '@massalabs/wallet-provider';
 import type { Provider } from '@massalabs/massa-web3';
 import { browser } from '$app/environment';
 
-export interface User {
-	address: string;
-	did: string;
-	role: 'manufacturer' | 'logistics' | 'consumer' | 'admin' | null;
-	name?: string;
-	avatar?: string;
-}
+// Import modular utilities
+import type { User, WalletInfo, PersistedStore } from '../types/auth';
+import { RoleAssignmentStrategy } from '../types/auth';
+import { createPersistedStore } from './persisted-store';
+import { validateStoredWalletInfo, validateStoredUser } from './validation';
+import { STORAGE_KEYS, removeFromStorage, cleanupCorruptedData, loadFromStorage } from './storage';
+import { ErrorType, classifyError, getRetryConfig, retryWithBackoff } from './error-recovery';
+import { validateWalletProviderState, assignUserRole } from './wallet-utils';
+import { checkStorageHealth } from './health-check';
 
-export interface WalletInfo {
-	address: string;
-	accountIndex: number;
-	name: string;
-	shortAddress: string;
-}
+// Re-export types and utilities for external use
+export type { User, WalletInfo };
+export { checkWalletAvailability, getWalletAccounts } from './wallet-utils';
+export { checkStorageHealth };
 
-// Storage keys
-const STORAGE_KEYS = {
-	CONNECTED_WALLET: 'provichain_connected_wallet',
-	USER_DATA: 'provichain_user_data',
-	MANUAL_DISCONNECT: 'provichain_manual_disconnect'
-};
-
-// Helper functions for localStorage
-const saveToStorage = (key: string, value: unknown) => {
-	if (browser) {
-		try {
-			localStorage.setItem(key, JSON.stringify(value));
-		} catch (error) {
-			console.warn('Failed to save to localStorage:', error);
-		}
-	}
-};
-
-const loadFromStorage = (key: string) => {
-	if (browser) {
-		try {
-			const item = localStorage.getItem(key);
-			return item ? JSON.parse(item) : null;
-		} catch (error) {
-			console.warn('Failed to load from localStorage:', error);
-			return null;
-		}
-	}
-	return null;
-};
-
-const removeFromStorage = (key: string) => {
-	if (browser) {
-		try {
-			localStorage.removeItem(key);
-		} catch (error) {
-			console.warn('Failed to remove from localStorage:', error);
-		}
-	}
-};
-
-// Helper to check if user manually disconnected
-export const isManuallyDisconnected = (): boolean => {
-	const manualDisconnect = loadFromStorage(STORAGE_KEYS.MANUAL_DISCONNECT);
-	console.log('🔍 Checking manual disconnect flag:', manualDisconnect);
-	return manualDisconnect === true;
-};
-
-// Initialize stores with persisted data
-const createPersistedStore = <T>(key: string, initialValue: T) => {
-	const stored = loadFromStorage(key);
-	const { subscribe, set, update } = writable<T>(stored ?? initialValue);
-
-	return {
-		subscribe,
-		set: (value: T) => {
-			set(value);
-			if (value === null || value === undefined) {
-				removeFromStorage(key);
-			} else {
-				saveToStorage(key, value);
-			}
-		},
-		update: (updater: (value: T) => T) => {
-			update((current) => {
-				const newValue = updater(current);
-				if (newValue === null || newValue === undefined) {
-					removeFromStorage(key);
-				} else {
-					saveToStorage(key, newValue);
-				}
-				return newValue;
-			});
-		}
-	};
-};
+// Session-based manual disconnect tracking (not persisted across browser sessions)
+let isManuallyDisconnectedInSession = false;
 
 // Global wallet listener for account changes
 let walletListener: { unsubscribe: () => void } | null = null;
+let accountChangeDebounceTimer: NodeJS.Timeout | null = null;
+let isProcessingAccountChange = false;
 
-// Function to setup wallet account change listener
-const setupAccountChangeListener = async () => {
-	try {
-		const walletList = await getWallets();
-		if (walletList.length === 0) return;
-
-		// Get the first available wallet
-		const wallet = walletList[0];
-
-		// Remove existing listener if any
-		if (walletListener) {
-			walletListener.unsubscribe();
-			walletListener = null;
-		}
-
-		// Setup new listener for account changes
-		const listener = wallet.listenAccountChanges?.(async (newAddress: string) => {
-			console.log('🔄 Wallet account changed to:', newAddress);
-
-			// Get current connected wallet
-			const currentWallet = get(connectedWallet);
-
-			// Only update if this is a different address AND it's not during a transaction
-			if (currentWallet && currentWallet.address !== newAddress) {
-				console.log('🔄 Account change detected:', currentWallet.address, '->', newAddress);
-
-				// Add a small delay to avoid conflicts during transaction signing
-				setTimeout(async () => {
-					try {
-						// Double check the account is still different (transaction might have completed)
-						const stillCurrentWallet = get(connectedWallet);
-						if (!stillCurrentWallet || stillCurrentWallet.address === newAddress) {
-							console.log('📍 Account change already handled or reverted');
-							return;
-						}
-
-						console.log('🔄 Proceeding with account switch to:', newAddress);
-
-						// Get the new account provider
-						const accounts = await wallet.accounts();
-						if (accounts.length > 0 && accounts[0].address === newAddress) {
-							const newProvider = accounts[0];
-
-							// Create new user and wallet info
-							const newUser: User = {
-								address: newAddress,
-								did: `did:massa:${newAddress}`,
-								role: null, // Reset role for new account - user must request roles again
-								name: `User ${newAddress.slice(0, 8)}...`,
-								avatar: undefined
-							};
-
-							const newWalletInfo: WalletInfo = {
-								address: newAddress,
-								accountIndex: 0,
-								name: 'Active Account',
-								shortAddress: `${newAddress.slice(0, 6)}...${newAddress.slice(-4)}`
-							};
-
-							// Update stores
-							provider.set(newProvider);
-							connectedWallet.set(newWalletInfo);
-							user.set(newUser);
-
-							console.log('✅ Successfully switched to account:', newAddress);
-
-							// Check roles for the new account after a longer delay
-							setTimeout(() => {
-								updateUserRoleFromBlockchain(false); // Don't auto-assign consumer for account switches
-							}, 2000);
-						}
-					} catch (error) {
-						console.error('❌ Error during account switch:', error);
-					}
-				}, 1500); // Wait 1.5 seconds before processing account change
-			}
-		});
-
-		if (listener) {
-			walletListener = listener;
-			console.log('👂 Account change listener setup successfully');
-		}
-	} catch (error) {
-		console.error('❌ Failed to setup account change listener:', error);
-	}
+// Helper to check if user manually disconnected in current session
+export const isManuallyDisconnected = (): boolean => {
+	console.log('Checking session manual disconnect flag:', isManuallyDisconnectedInSession);
+	return isManuallyDisconnectedInSession;
 };
 
-// Cleanup wallet listener
-export const cleanupAccountChangeListener = () => {
-	if (walletListener) {
-		walletListener.unsubscribe();
-		walletListener = null;
-		console.log('🧹 Wallet account change listener cleaned up');
-	}
+// Helper functions for manual disconnect state
+const setManualDisconnectState = (state: boolean) => {
+	isManuallyDisconnectedInSession = state;
+	console.log('Manual disconnect state set to:', state);
 };
 
-// Core wallet state with persistence
+const clearManualDisconnectState = () => {
+	isManuallyDisconnectedInSession = false;
+	console.log('Manual disconnect state cleared - auto-reconnect enabled for session');
+};
+
+// Public function to allow users to re-enable auto-reconnect
+export const enableAutoReconnect = () => {
+	isManuallyDisconnectedInSession = false;
+	console.log('Auto-reconnect manually re-enabled by user');
+};
+
+// Core wallet state with persistence and validation
 export const provider = writable<Provider | null>(null);
-export const connectedWallet = createPersistedStore<WalletInfo | null>(
-	STORAGE_KEYS.CONNECTED_WALLET,
-	null
+export const connectedWallet: PersistedStore<WalletInfo | null> =
+	createPersistedStore<WalletInfo | null>(
+		STORAGE_KEYS.CONNECTED_WALLET,
+		null,
+		validateStoredWalletInfo
+	);
+export const user: PersistedStore<User | null> = createPersistedStore<User | null>(
+	STORAGE_KEYS.USER_DATA,
+	null,
+	validateStoredUser
 );
-export const user = createPersistedStore<User | null>(STORAGE_KEYS.USER_DATA, null);
 export const isLoading = writable<boolean>(false);
 export const walletError = writable<string | null>(null);
 
@@ -210,34 +71,193 @@ export const isConnected = derived(
 	([$provider, $connectedWallet]) => !!$provider && !!$connectedWallet
 );
 
-// Helper to get current wallet address
 export const currentWalletAddress = derived(
 	connectedWallet,
 	($connectedWallet) => $connectedWallet?.address || null
 );
 
+// Account change handling
+const debouncedAccountChangeHandler = (newAddress: string) => {
+	if (accountChangeDebounceTimer) {
+		clearTimeout(accountChangeDebounceTimer);
+	}
+
+	accountChangeDebounceTimer = setTimeout(async () => {
+		await handleAccountChange(newAddress);
+	}, 500);
+};
+
+const handleAccountChange = async (newAddress: string) => {
+	if (isProcessingAccountChange) {
+		console.log('Account change already in progress, skipping...');
+		return;
+	}
+
+	try {
+		isProcessingAccountChange = true;
+
+		const currentWallet = get(connectedWallet);
+		if (!currentWallet || currentWallet.address === newAddress) {
+			console.log('Account change is same as current or no current wallet');
+			return;
+		}
+
+		console.log('Processing account change:', currentWallet.address, '->', newAddress);
+
+		const walletList = await getWallets();
+		const walletState = await validateWalletProviderState(newAddress, walletList);
+
+		if (!walletState) {
+			console.error('New address not available in current wallet state');
+			return;
+		}
+
+		const { account: targetAccount, accountIndex: targetAccountIndex } = walletState;
+		console.log(`Found target account at index ${targetAccountIndex} for address: ${newAddress}`);
+
+		const newUser: User = {
+			address: newAddress,
+			did: `did:massa:${newAddress}`,
+			role: null,
+			name: `User ${newAddress.slice(0, 8)}...`,
+			avatar: undefined
+		};
+
+		const newWalletInfo: WalletInfo = {
+			address: newAddress,
+			accountIndex: targetAccountIndex,
+			name: `Account ${targetAccountIndex}`,
+			shortAddress: `${newAddress.slice(0, 6)}...${newAddress.slice(-4)}`
+		};
+
+		provider.set(targetAccount);
+		connectedWallet.set(newWalletInfo);
+		user.set(newUser);
+
+		console.log('Successfully switched to account:', newAddress);
+
+		// Assign role using centralized system for account switch
+		Promise.resolve().then(async () => {
+			try {
+				console.log('Assigning role for account switch...');
+				const assignedRole = await assignUserRole(
+					RoleAssignmentStrategy.ACCOUNT_SWITCH,
+					newAddress
+				);
+
+				if (assignedRole) {
+					user.update((u) => (u ? { ...u, role: assignedRole } : u));
+					console.log(`Role assigned: ${assignedRole}`);
+				} else {
+					console.log('No role assigned - user must request via UI');
+				}
+			} catch (roleError) {
+				console.warn('Role assignment failed during account switch:', roleError);
+			}
+		});
+	} catch (error) {
+		console.error('Account change failed:', error);
+
+		const errorType = classifyError(error);
+		console.log(`Account change error classified as: ${errorType}`);
+
+		switch (errorType) {
+			case ErrorType.INVALID_STATE:
+			case ErrorType.WALLET_EXTENSION:
+				console.log('Critical error during account switch - clearing connection state');
+				provider.set(null);
+				connectedWallet.set(null);
+				user.set(null);
+				walletError.set('Account switch failed. Please reconnect manually.');
+				break;
+			default:
+				console.log('Temporary error during account switch - keeping current connection');
+				walletError.set('Account switch failed. Current account connection maintained.');
+				break;
+		}
+	} finally {
+		isProcessingAccountChange = false;
+	}
+};
+
+const setupAccountChangeListener = async () => {
+	try {
+		const walletList = await getWallets();
+		if (walletList.length === 0) {
+			console.log('No wallets available for account change listener setup');
+			return;
+		}
+
+		let wallet = walletList.find((w) => w.name() === WalletName.MassaWallet);
+		if (!wallet) {
+			wallet = walletList[0];
+			console.log('MassaWallet not found for listener, using:', wallet.name());
+		}
+
+		if (!wallet.listenAccountChanges) {
+			console.log('Selected wallet does not support account change listening');
+			return;
+		}
+
+		if (walletListener) {
+			walletListener.unsubscribe();
+			walletListener = null;
+		}
+
+		if (accountChangeDebounceTimer) {
+			clearTimeout(accountChangeDebounceTimer);
+			accountChangeDebounceTimer = null;
+		}
+
+		isProcessingAccountChange = false;
+
+		const listener = wallet.listenAccountChanges?.(async (newAddress: string) => {
+			console.log('Wallet account changed to:', newAddress);
+			debouncedAccountChangeHandler(newAddress);
+		});
+
+		if (listener) {
+			walletListener = listener;
+			console.log('Account change listener setup successfully');
+		}
+	} catch (error) {
+		console.error('Failed to setup account change listener:', error);
+	}
+};
+
+// Cleanup wallet listener
+export const cleanupAccountChangeListener = () => {
+	if (walletListener) {
+		walletListener.unsubscribe();
+		walletListener = null;
+		console.log('Wallet account change listener cleaned up');
+	}
+
+	if (accountChangeDebounceTimer) {
+		clearTimeout(accountChangeDebounceTimer);
+		accountChangeDebounceTimer = null;
+		console.log('Account change debounce timer cleared');
+	}
+
+	isProcessingAccountChange = false;
+};
+
 // Wallet connection function
 export const connectWallet = async (selectedAccountIndex?: number) => {
-	try {
-		isLoading.set(true);
-		walletError.set(null);
+	const performConnection = async (): Promise<void> => {
+		console.log('Searching for available wallets...');
 
-		console.log('🔍 Searching for available wallets...');
-
-		// Get all available wallets
 		const walletList = await getWallets();
 		console.log(
-			'📱 Found wallets:',
+			'Found wallets:',
 			walletList.map((w) => w.name())
 		);
 
-		// Try to find MassaStation wallet first
 		let wallet = walletList.find((w) => w.name() === WalletName.MassaWallet);
 
-		// If MassaStation not found, try other wallets
 		if (!wallet && walletList.length > 0) {
-			wallet = walletList[0]; // Use first available wallet
-			console.log('⚠️ MassaStation not found, using:', wallet.name());
+			wallet = walletList[0];
+			console.log('MassaStation not found, using:', wallet.name());
 		}
 
 		if (!wallet) {
@@ -246,17 +266,33 @@ export const connectWallet = async (selectedAccountIndex?: number) => {
 			);
 		}
 
-		console.log('✅ Using wallet:', wallet.name());
+		console.log('Using wallet:', wallet.name());
 
-		// Get accounts from the wallet
 		const accounts = await wallet.accounts();
-		console.log('👥 Found accounts:', accounts.length);
+		console.log('Found accounts:', accounts.length);
+		
+		// Enhanced debugging for account structure
+		if (accounts.length > 0) {
+			console.log('First account detailed structure:');
+			console.log('- Type:', typeof accounts[0]);
+			console.log('- Constructor:', accounts[0].constructor.name);
+			console.log('- Keys:', Object.keys(accounts[0]));
+			console.log('- Full object:', accounts[0]);
+			
+			// Try to get the address from the first account using different methods
+			const firstAccount = accounts[0];
+			const accountAsRecord = firstAccount as Record<string, unknown>;
+			console.log('Address extraction attempts:');
+			console.log('- firstAccount.address:', firstAccount.address);
+			console.log('- firstAccount.publicKey:', accountAsRecord.publicKey);
+			console.log('- firstAccount.name:', accountAsRecord.name);
+			console.log('- firstAccount.nickname:', accountAsRecord.nickname);
+		}
 
 		if (accounts.length === 0) {
 			throw new Error('No accounts found in wallet. Please create an account first.');
 		}
 
-		// Use the specified account index, or default to 0
 		const accountIndex = selectedAccountIndex !== undefined ? selectedAccountIndex : 0;
 
 		if (accountIndex >= accounts.length) {
@@ -266,62 +302,124 @@ export const connectWallet = async (selectedAccountIndex?: number) => {
 		}
 
 		const walletProvider = accounts[accountIndex];
-		const address = walletProvider.address;
+		console.log('Selected account:', walletProvider, 'Available keys:', Object.keys(walletProvider));
+		
+		// Handle different possible account structures
+		let address: string;
+		const accountAsRecord = walletProvider as Record<string, unknown>;
+		
+		if (walletProvider.address && typeof walletProvider.address === 'string') {
+			address = walletProvider.address;
+			console.log('✅ Address found via .address property:', address);
+		} else if (typeof walletProvider === 'string') {
+			address = walletProvider;
+			console.log('✅ Account is a string address:', address);
+		} else if (accountAsRecord.publicKey && typeof accountAsRecord.publicKey === 'string') {
+			// Some wallets might store address as publicKey
+			address = accountAsRecord.publicKey;
+			console.log('✅ Address found via .publicKey property:', address);
+		} else if (accountAsRecord.name && typeof accountAsRecord.name === 'string') {
+			// Some wallets might store address as name
+			address = accountAsRecord.name;
+			console.log('✅ Address found via .name property:', address);
+		} else {
+			console.error('❌ Unable to extract address from account:');
+			console.error('- Account type:', typeof walletProvider);
+			console.error('- Account constructor:', walletProvider.constructor.name);
+			console.error('- Available keys:', Object.keys(walletProvider));
+			console.error('- Full account object:', walletProvider);
+			throw new Error(
+				`Unable to extract address from wallet account. ` +
+				`Expected 'address' property but found: ${Object.keys(walletProvider).join(', ')}. ` +
+				`Please check your wallet connection or try a different wallet.`
+			);
+		}
 
-		console.log('🔗 Connecting to account:', address, 'at index:', accountIndex);
+		console.log('Connecting to account:', address, 'at index:', accountIndex);
 
-		// Check if this is a different account than what was previously stored
 		const previousWallet = get(connectedWallet);
 		const isNewAccount = !previousWallet || previousWallet.address !== address;
 
-		// Create user object with the connected address
 		const newUser: User = {
 			address,
 			did: `did:massa:${address}`,
-			role: isNewAccount ? 'consumer' : null, // New accounts default to consumer, returning accounts check blockchain
+			role: null,
 			name: `User ${address.slice(0, 8)}...`,
 			avatar: undefined
 		};
 
-		// Create wallet info object with account details
 		const walletInfo: WalletInfo = {
 			address,
-			accountIndex, // Use the actual selected account index
+			accountIndex,
 			name: `Account ${accountIndex}`,
 			shortAddress: `${address.slice(0, 6)}...${address.slice(-4)}`
 		};
 
-		// Update stores - this will automatically persist to localStorage
 		provider.set(walletProvider);
 		connectedWallet.set(walletInfo);
 		user.set(newUser);
 
-		// Clear manual disconnect flag since user is actively connecting
-		// This allows auto-reconnect to work again for this session
-		removeFromStorage(STORAGE_KEYS.MANUAL_DISCONNECT);
-		console.log('🔓 Manual disconnect flag cleared - auto-reconnect enabled');
+		clearManualDisconnectState();
 
-		console.log('🎉 Wallet connected successfully to:', address);
+		console.log('Wallet connected successfully to:', address);
 
-		// Setup account change listener to automatically detect wallet account switches
 		await setupAccountChangeListener();
 
-		// Only check for existing roles if this is the same account reconnecting
-		// For new accounts, user must explicitly request roles via the UI
-		if (!isNewAccount) {
-			console.log('🔍 Checking existing roles for returning account...');
-			setTimeout(() => {
-				updateUserRoleFromBlockchain(true); // Auto-assign consumer for returning users
-			}, 1000);
-		} else {
-			console.log('👤 New account connected - roles must be explicitly requested via UI');
-		}
+		Promise.resolve().then(async () => {
+			try {
+				const strategy = isNewAccount
+					? RoleAssignmentStrategy.MANUAL_NEW
+					: RoleAssignmentStrategy.MANUAL_RETURNING;
+
+				console.log(`Assigning role for ${isNewAccount ? 'new' : 'returning'} account...`);
+				const assignedRole = await assignUserRole(strategy, address);
+
+				if (assignedRole) {
+					user.update((u) => (u ? { ...u, role: assignedRole } : u));
+					console.log(`Role assigned: ${assignedRole}`);
+				}
+			} catch (roleError) {
+				console.warn('Role assignment failed during connection:', roleError);
+			}
+		});
+	};
+
+	try {
+		isLoading.set(true);
+		walletError.set(null);
+
+		const errorType = ErrorType.WALLET_EXTENSION;
+		const retryConfig = getRetryConfig(errorType);
+
+		await retryWithBackoff(performConnection, retryConfig, 'Manual wallet connection');
 	} catch (error) {
-		console.error('❌ Wallet connection failed:', error);
-		const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+		console.error('Wallet connection failed after all retry attempts:', error);
+
+		const errorType = classifyError(error);
+		console.log(`Connection error classified as: ${errorType}`);
+
+		let errorMessage: string;
+		switch (errorType) {
+			case ErrorType.WALLET_LOCKED:
+				errorMessage = 'Wallet is locked. Please unlock your wallet and try again.';
+				break;
+			case ErrorType.PERMISSION_DENIED:
+				errorMessage = 'Connection rejected. Please approve the connection request in your wallet.';
+				break;
+			case ErrorType.WALLET_EXTENSION:
+				errorMessage =
+					"Wallet extension not found. Please install MassaStation or check if it's enabled.";
+				break;
+			case ErrorType.NETWORK:
+				errorMessage = 'Network error. Please check your connection and try again.';
+				break;
+			default:
+				errorMessage =
+					error instanceof Error ? error.message : 'Unknown error occurred during connection.';
+		}
+
 		walletError.set(errorMessage);
 
-		// Reset state on error
 		provider.set(null);
 		connectedWallet.set(null);
 		user.set(null);
@@ -332,75 +430,62 @@ export const connectWallet = async (selectedAccountIndex?: number) => {
 	}
 };
 
-// Switch wallet function - disconnects current wallet and connects new one
+// Switch wallet function
 export const switchWallet = async () => {
 	try {
-		console.log('🔄 Switching wallet...');
+		console.log('Switching wallet...');
 
-		// First, clear current wallet state without marking as manual disconnect
 		if (get(isConnected)) {
-			// Clear stores without setting manual disconnect flag
 			provider.set(null);
 			connectedWallet.set(null);
 			user.set(null);
 			walletError.set(null);
-			// Wait a bit to ensure disconnection is complete
 			await new Promise((resolve) => setTimeout(resolve, 100));
 		}
 
-		// Then connect to new wallet
 		await connectWallet();
 	} catch (error) {
-		console.error('❌ Wallet switch failed:', error);
+		console.error('Wallet switch failed:', error);
 		throw error;
 	}
 };
 
 // Disconnect wallet function
 export const disconnectWallet = () => {
-	console.log('👋 Disconnecting wallet...');
+	console.log('Disconnecting wallet...');
 
-	// Cleanup account change listener
 	cleanupAccountChangeListener();
+	setManualDisconnectState(true);
 
-	// Mark as manually disconnected to prevent auto-reconnect
-	saveToStorage(STORAGE_KEYS.MANUAL_DISCONNECT, true);
-	console.log('🔒 Manual disconnect flag set to:', true);
-
-	// Clear all stores
 	provider.set(null);
 	connectedWallet.set(null);
 	user.set(null);
 	walletError.set(null);
 
-	// Also manually clear localStorage to ensure complete cleanup
-	removeFromStorage(STORAGE_KEYS.CONNECTED_WALLET);
-	removeFromStorage(STORAGE_KEYS.USER_DATA);
+	connectedWallet.forceSync();
+	user.forceSync();
 
-	console.log('✅ Wallet disconnected and all data cleared');
+	console.log('Wallet disconnected and all data cleared');
 };
 
 // Force disconnect and clear all persisted data
 export const forceDisconnectWallet = () => {
-	console.log('🔄 Force disconnecting and clearing all stored data...');
+	console.log('Force disconnecting and clearing all stored data...');
 
-	// Cleanup account change listener
 	cleanupAccountChangeListener();
+	setManualDisconnectState(true);
 
-	// Mark as manually disconnected to prevent auto-reconnect
-	saveToStorage(STORAGE_KEYS.MANUAL_DISCONNECT, true);
-
-	// Clear all stores (this will also clear localStorage due to persisted stores)
 	provider.set(null);
 	connectedWallet.set(null);
 	user.set(null);
 	walletError.set(null);
 
-	// Also manually clear localStorage as an extra precaution
+	connectedWallet.forceSync();
+	user.forceSync();
+
 	removeFromStorage(STORAGE_KEYS.CONNECTED_WALLET);
 	removeFromStorage(STORAGE_KEYS.USER_DATA);
 
-	// Clear ALL localStorage keys related to our app
 	if (browser) {
 		const keysToRemove = [];
 		for (let i = 0; i < localStorage.length; i++) {
@@ -412,21 +497,19 @@ export const forceDisconnectWallet = () => {
 		keysToRemove.forEach((key) => localStorage.removeItem(key));
 	}
 
-	console.log('✅ Wallet force disconnected and ALL data cleared');
+	console.log('Wallet force disconnected and ALL data cleared');
 };
 
-// Reset wallet state completely - useful when switching to a different wallet entirely
+// Reset wallet state completely
 export const resetWalletState = () => {
-	console.log('🔄 Resetting wallet state completely...');
+	console.log('Resetting wallet state completely...');
 
-	// Clear all stores
 	provider.set(null);
 	connectedWallet.set(null);
 	user.set(null);
 	walletError.set(null);
 	isLoading.set(false);
 
-	// Clear ALL localStorage keys related to our app
 	if (browser) {
 		const keysToRemove = [];
 		for (let i = 0; i < localStorage.length; i++) {
@@ -438,244 +521,206 @@ export const resetWalletState = () => {
 		keysToRemove.forEach((key) => localStorage.removeItem(key));
 	}
 
-	console.log('✅ Wallet state completely reset');
+	console.log('Wallet state completely reset');
 };
 
-// Auto-reconnect function to restore wallet connection on page load
+// Public function to force storage cleanup and reset
+export const resetStorageState = () => {
+	console.log('Performing complete storage state reset...');
+
+	try {
+		cleanupCorruptedData();
+
+		provider.set(null);
+		connectedWallet.set(null);
+		user.set(null);
+		walletError.set(null);
+		isLoading.set(false);
+
+		isManuallyDisconnectedInSession = false;
+
+		console.log('Storage state reset completed successfully');
+
+		return { success: true, message: 'Storage state reset successfully' };
+	} catch (error) {
+		console.error('Storage state reset failed:', error);
+		return { success: false, message: 'Storage state reset failed' };
+	}
+};
+
+// Auto-reconnect function
 export const autoReconnectWallet = async () => {
-	// Skip if not in browser or if already connected/connecting
 	if (!browser || get(provider) || get(isLoading)) {
+		console.log('Skipping auto-reconnect: not in browser or already connected/connecting');
 		return;
 	}
 
-	// Check if user manually disconnected - if so, don't auto-reconnect
-	const manuallyDisconnected = loadFromStorage(STORAGE_KEYS.MANUAL_DISCONNECT);
-	if (manuallyDisconnected) {
-		console.log('⏸️ Skipping auto-reconnect - user manually disconnected');
-		// Do NOT clear the manual disconnect flag - keep it so auto-reconnect stays disabled
-		// Clear stored wallet data since we're not reconnecting
+	if (isManuallyDisconnectedInSession) {
+		console.log('Skipping auto-reconnect - user manually disconnected in this session');
 		connectedWallet.set(null);
 		user.set(null);
-		removeFromStorage(STORAGE_KEYS.CONNECTED_WALLET);
-		removeFromStorage(STORAGE_KEYS.USER_DATA);
 		return;
 	}
+
+	const performAutoReconnect = async (): Promise<void> => {
+		console.log('Attempting to auto-reconnect wallet...');
+
+		const rawStoredWalletInfo = loadFromStorage(STORAGE_KEYS.CONNECTED_WALLET);
+		const rawStoredUser = loadFromStorage(STORAGE_KEYS.USER_DATA);
+
+		const storedWalletInfo = validateStoredWalletInfo(rawStoredWalletInfo);
+		const storedUser = validateStoredUser(rawStoredUser);
+
+		if (!storedWalletInfo || !storedUser) {
+			console.log('No valid stored wallet data found - skipping auto-reconnect');
+			connectedWallet.set(null);
+			user.set(null);
+			removeFromStorage(STORAGE_KEYS.CONNECTED_WALLET);
+			removeFromStorage(STORAGE_KEYS.USER_DATA);
+			return;
+		}
+
+		console.log('Found valid stored data for address:', storedWalletInfo.address);
+
+		const walletList = await getWallets();
+		if (walletList.length === 0) {
+			throw new Error('No wallets available for reconnection');
+		}
+
+		const walletState = await validateWalletProviderState(storedWalletInfo.address, walletList);
+		if (!walletState) {
+			throw new Error('Previously connected account not available in current wallet state');
+		}
+
+		const { account: targetAccount, accountIndex: targetAccountIndex } = walletState;
+		console.log(`Found target account at index ${targetAccountIndex}:`, targetAccount.address);
+
+		const reconstructedUser: User = {
+			address: storedWalletInfo.address,
+			did: storedUser.did,
+			role: null,
+			name: storedUser.name || `User ${storedWalletInfo.address.slice(0, 8)}...`,
+			avatar: storedUser.avatar
+		};
+
+		const reconstructedWalletInfo: WalletInfo = {
+			address: storedWalletInfo.address,
+			accountIndex: targetAccountIndex,
+			name: `Account ${targetAccountIndex}`,
+			shortAddress: `${storedWalletInfo.address.slice(0, 6)}...${storedWalletInfo.address.slice(-4)}`
+		};
+
+		provider.set(targetAccount);
+		connectedWallet.set(reconstructedWalletInfo);
+		user.set(reconstructedUser);
+
+		console.log('Auto-reconnect successful to:', storedWalletInfo.address);
+
+		await setupAccountChangeListener();
+
+		Promise.resolve().then(async () => {
+			try {
+				console.log('Assigning role for auto-reconnect...');
+				const assignedRole = await assignUserRole(
+					RoleAssignmentStrategy.AUTO_RECONNECT,
+					storedWalletInfo.address,
+					storedUser.role
+				);
+
+				if (assignedRole) {
+					user.update((u) => (u ? { ...u, role: assignedRole } : u));
+					console.log(`Role assigned: ${assignedRole}`);
+				}
+			} catch (roleError) {
+				console.warn('Role assignment failed during auto-reconnect:', roleError);
+			}
+		});
+	};
 
 	try {
 		isLoading.set(true);
 		walletError.set(null);
 
-		console.log('🔄 Attempting to auto-reconnect wallet...');
+		const errorType = ErrorType.NETWORK;
+		const retryConfig = getRetryConfig(errorType);
 
-		// Get available wallets
-		const walletList = await getWallets();
-
-		if (walletList.length === 0) {
-			console.log('⚠️ No wallets available for reconnection');
-			// Clear stored data if no wallets available
-			connectedWallet.set(null);
-			user.set(null);
-			removeFromStorage(STORAGE_KEYS.CONNECTED_WALLET);
-			removeFromStorage(STORAGE_KEYS.USER_DATA);
-			return;
-		}
-
-		// Try to find the same wallet type or use first available
-		let wallet = walletList.find((w) => w.name() === WalletName.MassaWallet);
-		if (!wallet) {
-			wallet = walletList[0];
-		}
-
-		// Get accounts from the wallet
-		const accounts = await wallet.accounts();
-
-		if (accounts.length === 0) {
-			console.log('⚠️ No accounts found in wallet');
-			connectedWallet.set(null);
-			user.set(null);
-			removeFromStorage(STORAGE_KEYS.CONNECTED_WALLET);
-			removeFromStorage(STORAGE_KEYS.USER_DATA);
-			return;
-		}
-
-		// Get stored wallet info to determine which account to reconnect to
-		const storedWalletInfo = get(connectedWallet);
-		const storedUser = get(user);
-
-		// If no stored wallet info, don't auto-reconnect (user needs to manually connect)
-		if (!storedWalletInfo || !storedWalletInfo.address) {
-			console.log('⚠️ No stored wallet info found - skipping auto-reconnect');
-			connectedWallet.set(null);
-			user.set(null);
-			removeFromStorage(STORAGE_KEYS.CONNECTED_WALLET);
-			removeFromStorage(STORAGE_KEYS.USER_DATA);
-			return;
-		}
-
-		// Find the specific account that was previously connected
-		const targetAccount = accounts.find((account) => account.address === storedWalletInfo.address);
-
-		if (!targetAccount) {
-			console.log('⚠️ Previously connected account not found in wallet - skipping auto-reconnect');
-			// Clear stored data since the account is no longer available
-			connectedWallet.set(null);
-			user.set(null);
-			removeFromStorage(STORAGE_KEYS.CONNECTED_WALLET);
-			removeFromStorage(STORAGE_KEYS.USER_DATA);
-			return;
-		}
-
-		const currentAddress = targetAccount.address;
-		console.log('🔗 Auto-reconnecting to previously connected account:', currentAddress);
-		const isSameAccount = true; // We specifically found the same account
-
-		// Create user object
-		const newUser: User = {
-			address: currentAddress,
-			did: `did:massa:${currentAddress}`,
-			role: isSameAccount && storedUser?.role ? storedUser.role : null, // Keep role if same account
-			name: `User ${currentAddress.slice(0, 8)}...`,
-			avatar: undefined
-		};
-
-		// Create wallet info object
-		const walletInfo: WalletInfo = {
-			address: currentAddress,
-			accountIndex: 0, // Always use index 0 (currently active account)
-			name: 'Account 1',
-			shortAddress: `${currentAddress.slice(0, 6)}...${currentAddress.slice(-4)}`
-		};
-
-		// Update stores
-		provider.set(targetAccount);
-		connectedWallet.set(walletInfo);
-		user.set(newUser);
-
-		console.log('✅ Auto-reconnect successful to:', currentAddress);
-
-		// Only check roles if this is the same account that was previously connected
-		if (isSameAccount && storedUser?.role) {
-			console.log('🔍 Same account reconnected, verifying existing role...');
-			setTimeout(() => {
-				updateUserRoleFromBlockchain(true); // Auto-assign consumer for returning users
-			}, 1000);
-		} else if (isSameAccount) {
-			console.log('🔍 Same account but no stored role, checking blockchain...');
-			setTimeout(() => {
-				updateUserRoleFromBlockchain(true); // Auto-assign consumer for returning users
-			}, 1000);
-		} else {
-			console.log('👤 Different account detected, roles must be explicitly requested');
-		}
+		await retryWithBackoff(performAutoReconnect, retryConfig, 'Auto-reconnect');
 	} catch (error) {
-		console.error('❌ Auto-reconnect failed:', error);
-		// Clear stored data on reconnection failure
-		connectedWallet.set(null);
-		user.set(null);
-		provider.set(null);
-		removeFromStorage(STORAGE_KEYS.CONNECTED_WALLET);
-		removeFromStorage(STORAGE_KEYS.USER_DATA);
+		console.error('Auto-reconnect failed after all retry attempts:', error);
+
+		const errorType = classifyError(error);
+		console.log(`Final error classified as: ${errorType}`);
+
+		switch (errorType) {
+			case ErrorType.WALLET_LOCKED:
+				console.log('Wallet is locked - preserving stored data for when user unlocks');
+				connectedWallet.set(null);
+				user.set(null);
+				provider.set(null);
+				walletError.set('Wallet is locked. Please unlock your wallet to reconnect.');
+				break;
+
+			case ErrorType.PERMISSION_DENIED:
+				console.log('Permission denied - user needs to re-authorize');
+				connectedWallet.set(null);
+				user.set(null);
+				provider.set(null);
+				walletError.set('Permission denied. Please reconnect manually to re-authorize.');
+				break;
+
+			case ErrorType.WALLET_EXTENSION:
+				console.log(
+					'Wallet extension not available - preserving data for when extension is available'
+				);
+				connectedWallet.set(null);
+				user.set(null);
+				provider.set(null);
+				walletError.set(
+					'Wallet extension not available. Please check if your wallet is installed and enabled.'
+				);
+				break;
+
+			case ErrorType.INVALID_STATE:
+				console.log('Invalid stored data - clearing all data');
+				connectedWallet.set(null);
+				user.set(null);
+				provider.set(null);
+				removeFromStorage(STORAGE_KEYS.CONNECTED_WALLET);
+				removeFromStorage(STORAGE_KEYS.USER_DATA);
+				walletError.set('Stored wallet data is corrupted. Please reconnect manually.');
+				break;
+
+			case ErrorType.NETWORK:
+			case ErrorType.UNKNOWN:
+			default:
+				console.log('Network or unknown error - preserving data for retry');
+				connectedWallet.set(null);
+				user.set(null);
+				provider.set(null);
+				walletError.set('Unable to reconnect. Please check your connection and try again.');
+				break;
+		}
 	} finally {
 		isLoading.set(false);
 	}
 };
 
-// Function to get available wallet accounts for selection
-export const getWalletAccounts = async () => {
-	try {
-		console.log('🔍 Getting wallet accounts for selection...');
-
-		const walletList = await getWallets();
-		if (walletList.length === 0) {
-			return { success: false, error: 'No wallets found' };
-		}
-
-		// Try to find MassaStation wallet first
-		let wallet = walletList.find((w) => w.name() === WalletName.MassaWallet);
-		if (!wallet) {
-			wallet = walletList[0];
-		}
-
-		console.log('📱 Using wallet for account list:', wallet.name());
-		const accounts = await wallet.accounts();
-
-		console.log('📋 Raw accounts from wallet:');
-		accounts.forEach((account, index) => {
-			console.log(`  ${index}: ${account.address} (${typeof account})`);
-		});
-
-		// Note: Most Massa wallets only return the currently active account
-		// To switch accounts, users must change the active account in their wallet UI
-		const accountData = accounts.map((account, index) => ({
-			index,
-			address: account.address,
-			name: index === 0 ? 'Currently Active Account' : `Account ${index + 1}`,
-			shortAddress: `${account.address.slice(0, 8)}...${account.address.slice(-6)}`
-		}));
-
-		console.log('📊 Processed account data:', accountData);
-		console.log('ℹ️ Note: To switch accounts, change the active account in your wallet extension');
-
-		return {
-			success: true,
-			data: accountData
-		};
-	} catch (error) {
-		console.error('Failed to get wallet accounts:', error);
-		return { success: false, error: 'Failed to get wallet accounts' };
-	}
-};
-
-// Function to check if wallet is available
-export const checkWalletAvailability = async (): Promise<boolean> => {
-	try {
-		const walletList = await getWallets();
-		return walletList.length > 0;
-	} catch (error) {
-		console.error('Error checking wallet availability:', error);
-		return false;
-	}
-};
-
-// Function to check and update user role from blockchain
+// Backward compatibility wrapper - updates user store with assigned role
 export const updateUserRoleFromBlockchain = async (autoAssignConsumer: boolean = true) => {
-	try {
-		const currentUser = get(user);
-		if (!currentUser) return;
+	const currentUser = get(user);
+	if (!currentUser) return null;
 
-		// Import here to avoid circular dependency
-		const { checkUserRole } = await import('../web3');
+	const strategy = autoAssignConsumer
+		? RoleAssignmentStrategy.MANUAL_RETURNING
+		: RoleAssignmentStrategy.ACCOUNT_SWITCH;
 
-		// Check roles in priority order - using uppercase names for contract
-		const rolesToCheck = [
-			{ contract: 'ADMIN', store: 'admin' },
-			{ contract: 'MANUFACTURER', store: 'manufacturer' },
-			{ contract: 'LOGISTICS', store: 'logistics' },
-			{ contract: 'CONSUMER', store: 'consumer' }
-		];
+	const assignedRole = await assignUserRole(strategy, currentUser.address, currentUser.role);
 
-		for (const { contract: roleToCheck, store: storeRole } of rolesToCheck) {
-			const hasRole = await checkUserRole(roleToCheck);
-			if (hasRole) {
-				user.update((u) => (u ? { ...u, role: storeRole as User['role'] } : u));
-				console.log('✅ User role updated to:', storeRole);
-				return storeRole;
-			}
-		}
-
-		// Only assign default consumer role if explicitly requested (for returning users)
-		if (autoAssignConsumer) {
-			user.update((u) => (u ? { ...u, role: 'consumer' } : u));
-			console.log('✅ No specific role found, assigned default consumer role');
-			return 'consumer';
-		} else {
-			console.log('ℹ️ No blockchain roles found, keeping null role (user must request via UI)');
-			return null;
-		}
-	} catch (error) {
-		console.error('Error updating user role:', error);
-		return null;
+	if (assignedRole !== null) {
+		user.update((u) => (u ? { ...u, role: assignedRole } : u));
 	}
+
+	return assignedRole;
 };
 
 // Function to change user role

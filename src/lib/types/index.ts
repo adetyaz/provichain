@@ -111,3 +111,10 @@ export interface ProductMetadata {
 		insuranceValue: string;
 	};
 }
+
+// Re-export auth and store related types
+export type { User, WalletInfo, PersistedStore } from './auth';
+export { RoleAssignmentStrategy } from './auth';
+export type { RetryConfig } from './error-recovery';
+export { ErrorType } from './error-recovery';
+export type { StorageKeys, StorageHealthResult } from './storage';

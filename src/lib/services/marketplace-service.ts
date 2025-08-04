@@ -5,7 +5,7 @@
  */
 
 import { getManufacturerProducts, getProductById } from './product-service';
-import { getUserAddress } from '../blockchain/provider';
+import { getUserAddress } from '../provider/provider';
 import {
 	createProductRequestOnChain,
 	getPendingRequestsFromChain,

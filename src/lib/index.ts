@@ -13,7 +13,7 @@ export {
 	getAccessControlContract,
 	getParticipantRegistryContract,
 	getDIDRegistryContract
-} from './blockchain/provider';
+} from './provider/provider';
 
 // IPFS/Pinata Services
 export {

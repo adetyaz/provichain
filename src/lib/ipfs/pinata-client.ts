@@ -97,37 +97,108 @@ export async function getMetadataFromPinata(ipfsHash: string): Promise<ProductMe
 	}
 }
 
-// Upload image to Pinata IPFS
-export async function uploadImageToPinata(file: File): Promise<string> {
+// Upload image to Pinata IPFS with validation and progress support
+export async function uploadImageToPinata(
+	file: File,
+	progressCallback?: (progress: number) => void,
+	productId?: string,
+	manufacturerAddress?: string
+): Promise<string> {
 	try {
+		// File validation
+		const maxSize = 10 * 1024 * 1024; // 10MB
+		const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+		if (file.size > maxSize) {
+			throw new Error('Image file size must be less than 10MB');
+		}
+
+		if (!allowedTypes.includes(file.type)) {
+			throw new Error('Image must be JPEG, PNG, WebP, or GIF format');
+		}
+
+		console.log('📤 Uploading image to IPFS via Pinata...');
+		console.log('Image details:', {
+			name: file.name,
+			size: file.size,
+			type: file.type,
+			productId
+		});
+
 		const formData = new FormData();
 		formData.append('file', file);
 
+		// Create enhanced metadata
+		const keyvalues: Record<string, string> = {
+			type: 'product-image',
+			uploadedAt: new Date().toISOString(),
+			fileSize: file.size.toString(),
+			mimeType: file.type,
+			originalName: file.name
+		};
+
+		if (productId) {
+			keyvalues.productId = productId;
+		}
+		if (manufacturerAddress) {
+			keyvalues.manufacturer = manufacturerAddress;
+		}
+
 		const metadata = JSON.stringify({
-			name: file.name,
-			keyvalues: {
-				type: 'product-image'
-			}
+			name: productId ? `Product-${productId}-image.${file.name.split('.').pop()}` : file.name,
+			keyvalues
 		});
 		formData.append('pinataMetadata', metadata);
 
-		const response = await fetch(`${CONFIG.pinata.baseUrl}/pinning/pinFileToIPFS`, {
-			method: 'POST',
-			headers: {
-				pinata_api_key: CONFIG.pinata.apiKey,
-				pinata_secret_api_key: CONFIG.pinata.secretKey
-			},
-			body: formData
+		// Add Pinata options
+		const pinataOptions = JSON.stringify({
+			cidVersion: 0
 		});
+		formData.append('pinataOptions', pinataOptions);
 
-		if (!response.ok) {
-			throw new Error(`Image upload failed: ${response.statusText}`);
-		}
+		// Create XMLHttpRequest for progress tracking
+		return new Promise((resolve, reject) => {
+			const xhr = new XMLHttpRequest();
 
-		const result = await response.json();
-		return result.IpfsHash;
+			if (progressCallback) {
+				xhr.upload.onprogress = (event) => {
+					if (event.lengthComputable) {
+						const progress = Math.round((event.loaded / event.total) * 100);
+						progressCallback(progress);
+					}
+				};
+			}
+
+			xhr.onload = () => {
+				console.log('📡 Response status:', xhr.status, xhr.statusText);
+
+				if (xhr.status === 200) {
+					try {
+						const result = JSON.parse(xhr.responseText);
+						console.log('✅ Image uploaded successfully to IPFS:', result.IpfsHash);
+						resolve(result.IpfsHash);
+					} catch (parseError) {
+						console.error('❌ Failed to parse upload response:', parseError);
+						reject(new Error('Failed to parse upload response'));
+					}
+				} else {
+					console.error('❌ Image upload failed:', xhr.status, xhr.statusText);
+					reject(new Error(`Image upload failed: ${xhr.statusText}`));
+				}
+			};
+
+			xhr.onerror = () => {
+				console.error('❌ Network error during image upload');
+				reject(new Error('Network error during image upload'));
+			};
+
+			xhr.open('POST', `${CONFIG.pinata.baseUrl}/pinning/pinFileToIPFS`);
+			xhr.setRequestHeader('pinata_api_key', CONFIG.pinata.apiKey);
+			xhr.setRequestHeader('pinata_secret_api_key', CONFIG.pinata.secretKey);
+			xhr.send(formData);
+		});
 	} catch (error) {
-		console.error('Failed to upload image to Pinata:', error);
+		console.error('❌ Failed to upload image to Pinata:', error);
 		throw error;
 	}
 }

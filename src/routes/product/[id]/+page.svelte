@@ -185,9 +185,13 @@
 
 		// IPFS & Arweave Links
 		attachments: {
-			images: ['ipfs://QmYwAPJzv5CZsnANHZ8N9aAZZHjz6Q9YQSGkrj6c8qvj8a'],
+			images: [
+				'https://images.unsplash.com/photo-1447933601403-0c6688de566e?w=400&h=400&fit=crop&crop=center'
+			], // Using a real placeholder image for demo
 			certificates: ['ar://kL8K7P9M2N1X5Y6Z3A4B7C8D9E0F1G2H3I4J5K6L7M8N'],
-			testReports: ['ipfs://QmNhz8K6P2M9X3Y4Z1A2B5C6D7E8F9G0H1I2J3K4L5M6N']
+			testReports: [
+				'https://gateway.pinata.cloud/ipfs/QmNhz8K6P2M9X3Y4Z1A2B5C6D7E8F9G0H1I2J3K4L5M6N'
+			]
 		}
 	};
 
@@ -205,13 +209,85 @@
 			batch: productData.batch,
 			quantity: productData.quantity,
 			category: productData.category,
-			mintedDate: productData.mintedAt || productData.createdAt || mockFallbackData.mintedDate,
+			mintedDate: productData.mintedAt || mockFallbackData.mintedDate,
 			price: productData.price,
 			ipfsHash: productData.ipfsHash,
-			// Keep enhanced mock data for demonstration until blockchain integration is complete
-			...mockFallbackData
+			// Add real product image if available
+			attachments: {
+				...mockFallbackData.attachments,
+				images: productData.image
+					? [`https://gateway.pinata.cloud/ipfs/${productData.image}`]
+					: mockFallbackData.attachments.images
+			}
 		};
 	});
+
+	// Add debugging for image URL
+	$effect(() => {
+		if (productData?.image) {
+			console.log('🖼️ Product has real image data');
+			console.log('📂 Product image hash:', productData.image);
+			console.log('🔗 Full image URL:', `https://gateway.pinata.cloud/ipfs/${productData.image}`);
+		} else {
+			console.log('📷 No product image data, using mock fallback');
+			console.log('🔗 Mock image URL:', mockFallbackData.attachments.images[0]);
+			console.log('💡 This is expected for products without uploaded images');
+		}
+	});
+
+	// Function to handle image loading with fallback gateways
+	function handleImageError(e: Event, imageHash: string) {
+		const target = e.target as HTMLImageElement;
+		if (!target) return;
+
+		console.error('Failed to load image from current gateway, trying fallback...');
+
+		// Try alternative IPFS gateways
+		const fallbackGateways = [
+			`https://gateway.pinata.cloud/ipfs/${imageHash}`,
+			`https://ipfs.io/ipfs/${imageHash}`,
+			`https://cloudflare-ipfs.com/ipfs/${imageHash}`,
+			`https://dweb.link/ipfs/${imageHash}`
+		];
+
+		const currentSrc = target.src;
+		let currentGatewayIndex = -1;
+
+		// Find which gateway is currently being used
+		for (let i = 0; i < fallbackGateways.length; i++) {
+			if (currentSrc === fallbackGateways[i]) {
+				currentGatewayIndex = i;
+				break;
+			}
+		}
+
+		if (currentGatewayIndex < fallbackGateways.length - 1) {
+			// Try next fallback gateway
+			const nextGateway = fallbackGateways[currentGatewayIndex + 1];
+			console.log('🔄 Trying fallback gateway:', nextGateway);
+			target.src = nextGateway;
+		} else {
+			// All gateways failed, hide the image
+			console.error('❌ All IPFS gateways failed for image:', imageHash);
+			target.style.display = 'none';
+		}
+	}
+
+	// Function to extract IPFS hash from various URL formats
+	function extractIPFSHash(url: string): string | null {
+		// Handle ipfs:// protocol URLs
+		if (url.startsWith('ipfs://')) {
+			return url.replace('ipfs://', '');
+		}
+
+		// Handle HTTP gateway URLs
+		const gatewayMatch = url.match(/\/ipfs\/([a-zA-Z0-9]+)$/);
+		if (gatewayMatch) {
+			return gatewayMatch[1];
+		}
+
+		return null;
+	}
 
 	let activeTab = $state('overview');
 	let showQRCode = $state(false);
@@ -329,6 +405,39 @@
 					</div>
 
 					<div class="text-center">
+						<!-- Product Image Display -->
+						{#if productData?.image}
+							<div class="mb-4">
+								<img
+									src="https://gateway.pinata.cloud/ipfs/${productData.image}"
+									alt="Product: {displayData.name}"
+									class="mx-auto h-48 w-48 rounded-xl border border-gray-600 object-cover shadow-lg"
+									loading="lazy"
+									onerror={(e) => {
+										if (productData?.image) {
+											handleImageError(e, productData.image);
+										}
+									}}
+								/>
+								<p class="mt-2 text-xs text-gray-400">Product Image</p>
+							</div>
+						{:else if displayData.attachments.images.length > 0}
+							<div class="mb-4">
+								<img
+									src={displayData.attachments.images[0]}
+									alt="Product: {displayData.name}"
+									class="mx-auto h-48 w-48 rounded-xl border border-gray-600 object-cover shadow-lg"
+									loading="lazy"
+								/>
+								<p class="mt-1 text-xs text-gray-400">Demo Image</p>
+								<span
+									class="inline-block rounded-full bg-yellow-500/20 px-2 py-1 text-xs text-yellow-400"
+								>
+									Placeholder
+								</span>
+							</div>
+						{/if}
+
 						<Button onclick={() => (showQRCode = !showQRCode)} variant="outline" class="mb-4">
 							{showQRCode ? 'Hide' : 'Show'} QR Code
 						</Button>
@@ -423,6 +532,41 @@
 				</div>
 
 				<div class="space-y-6">
+					{#if displayData && displayData.attachments && displayData.attachments.images && displayData.attachments.images.length > 0}
+						<Card
+							title="Product Image"
+							description={productData?.image ? 'Uploaded product image' : 'Demo placeholder image'}
+						>
+							<div class="aspect-square overflow-hidden rounded-lg">
+								<img
+									src={displayData.attachments.images[0]}
+									alt="{displayData.name} product image"
+									class="h-full w-full object-cover transition-transform duration-300 hover:scale-105"
+									onerror={(e) => {
+										const imageUrl = displayData.attachments.images[0];
+										const ipfsHash = extractIPFSHash(imageUrl);
+										if (ipfsHash) {
+											handleImageError(e, ipfsHash);
+										} else {
+											console.error('Could not extract IPFS hash from URL:', imageUrl);
+											const target = e.target as HTMLImageElement;
+											if (target) target.style.display = 'none';
+										}
+									}}
+								/>
+							</div>
+							{#if !productData?.image}
+								<div class="mt-2 text-center">
+									<span
+										class="inline-block rounded-full bg-yellow-500/20 px-2 py-1 text-xs text-yellow-400"
+									>
+										Demo Image
+									</span>
+								</div>
+							{/if}
+						</Card>
+					{/if}
+
 					<Card title="Quality Score" description="Overall product quality assessment">
 						<div class="mb-6 text-center">
 							<div class="mb-2 text-5xl font-bold text-green-400">
